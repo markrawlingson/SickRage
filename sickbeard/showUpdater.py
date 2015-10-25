@@ -17,56 +17,37 @@
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
 import datetime
-import os
-
+import threading
 import sickbeard
 
 from sickbeard import logger
-from sickbeard import exceptions
 from sickbeard import ui
-from sickbeard.exceptions import ex
-from sickbeard import encodingKludge as ek
 from sickbeard import db
 from sickbeard import network_timezones
 from sickbeard import failed_history
+from sickrage.helper.exceptions import CantRefreshShowException, CantUpdateShowException, ex
 
-class ShowUpdater():
+
+class ShowUpdater:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.amActive = False
 
     def run(self, force=False):
+
+        self.amActive = True
 
         update_datetime = datetime.datetime.now()
         update_date = update_datetime.date()
 
+        # refresh network timezones
+        network_timezones.update_network_dict()
+
+        # sure, why not?
+        if sickbeard.USE_FAILED_DOWNLOADS:
+            failed_history.trimHistory()
+
         logger.log(u"Doing full update on all shows")
-
-        # clean out cache directory, remove everything > 12 hours old
-        if sickbeard.CACHE_DIR:
-            for indexer in sickbeard.indexerApi().indexers:
-                cache_dir = sickbeard.indexerApi(indexer).cache
-                logger.log(u"Trying to clean cache folder " + cache_dir)
-
-                # Does our cache_dir exists
-                if not ek.ek(os.path.isdir, cache_dir):
-                    logger.log(u"Can't clean " + cache_dir + " if it doesn't exist", logger.WARNING)
-                else:
-                    max_age = datetime.timedelta(hours=12)
-                    # Get all our cache files
-                    cache_files = ek.ek(os.listdir, cache_dir)
-
-                    for cache_file in cache_files:
-                        cache_file_path = ek.ek(os.path.join, cache_dir, cache_file)
-
-                        if ek.ek(os.path.isfile, cache_file_path):
-                            cache_file_modified = datetime.datetime.fromtimestamp(
-                                ek.ek(os.path.getmtime, cache_file_path))
-
-                            if update_datetime - cache_file_modified > max_age:
-                                try:
-                                    ek.ek(os.remove, cache_file_path)
-                                except OSError, e:
-                                    logger.log(u"Unable to clean " + cache_dir + ": " + repr(e) + " / " + str(e),
-                                               logger.WARNING)
-                                    break
 
         # select 10 'Ended' tv_shows updated more than 90 days ago to include in this update
         stale_should_update = []
@@ -86,20 +67,29 @@ class ShowUpdater():
         for curShow in sickbeard.showList:
 
             try:
+                # get next episode airdate
+                curShow.nextEpisode()
+
                 # if should_update returns True (not 'Ended') or show is selected stale 'Ended' then update, otherwise just refresh
                 if curShow.should_update(update_date=update_date) or curShow.indexerid in stale_should_update:
-                    curQueueItem = sickbeard.showQueueScheduler.action.updateShow(curShow, True)  # @UndefinedVariable
+                    try:
+                        piList.append(sickbeard.showQueueScheduler.action.updateShow(curShow, True))  # @UndefinedVariable
+                    except CantUpdateShowException as e:
+                        logger.log("Unable to update show: {0}".format(str(e)),logger.DEBUG)
                 else:
                     logger.log(
                         u"Not updating episodes for show " + curShow.name + " because it's marked as ended and last/next episode is not within the grace period.",
                         logger.DEBUG)
-                    curQueueItem = sickbeard.showQueueScheduler.action.refreshShow(curShow, True)  # @UndefinedVariable
+                    piList.append(sickbeard.showQueueScheduler.action.refreshShow(curShow, True))  # @UndefinedVariable
 
-                piList.append(curQueueItem)
-
-            except (exceptions.CantUpdateException, exceptions.CantRefreshException), e:
+            except (CantUpdateShowException, CantRefreshShowException), e:
                 logger.log(u"Automatic update failed: " + ex(e), logger.ERROR)
 
         ui.ProgressIndicators.setIndicator('dailyUpdate', ui.QueueProgressIndicator("Daily Update", piList))
 
         logger.log(u"Completed full update on all shows")
+
+        self.amActive = False
+
+    def __del__(self):
+        pass

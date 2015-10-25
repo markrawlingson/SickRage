@@ -17,11 +17,9 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-import urllib, urllib2, xml.dom.minidom
+import urllib2
 from xml.dom.minidom import parseString
 import sickbeard
-import telnetlib
-import re
 import time
 
 from sickbeard import logger
@@ -42,6 +40,10 @@ class NMJv2Notifier:
 
     def notify_subtitle_download(self, ep_name, lang):
         self._notifyNMJ()
+        
+    def notify_git_update(self, new_version):
+        return False
+        # Not implemented, no reason to start scanner.
 
     def test_notify(self, host):
         return self._sendNMJ(host)
@@ -150,7 +152,7 @@ class NMJv2Notifier:
                 logger.log(u"Popcorn Hour returned an error: %s" % (error_messages[index]), logger.ERROR)
                 return False
             else:
-                logger.log(u"NMJv2 started background scan", logger.MESSAGE)
+                logger.log(u"NMJv2 started background scan", logger.INFO)
                 return True
 
     def _notifyNMJ(self, host=None, force=False):

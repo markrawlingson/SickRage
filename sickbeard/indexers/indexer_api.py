@@ -25,6 +25,9 @@ class indexerApi(object):
     def __init__(self, indexerID=None):
         self.indexerID = int(indexerID) if indexerID else None
 
+    def __del__(self):
+        pass
+
     def indexer(self, *args, **kwargs):
         if self.indexerID:
             return indexerConfig[self.indexerID]['module'](*args, **kwargs)
@@ -33,7 +36,12 @@ class indexerApi(object):
     def config(self):
         if self.indexerID:
             return indexerConfig[self.indexerID]
-        return initConfig
+        _ = initConfig
+        if sickbeard.INDEXER_DEFAULT_LANGUAGE in _:
+            del _[_['valid_languages'].index(sickbeard.INDEXER_DEFAULT_LANGUAGE)]
+        _['valid_languages'].sort()
+        _['valid_languages'].insert(0, sickbeard.INDEXER_DEFAULT_LANGUAGE)
+        return _
 
     @property
     def name(self):
@@ -44,7 +52,10 @@ class indexerApi(object):
     def api_params(self):
         if self.indexerID:
             if sickbeard.CACHE_DIR:
-                indexerConfig[self.indexerID]['api_params']['cache'] = os.path.join(sickbeard.CACHE_DIR, self.name)
+                indexerConfig[self.indexerID]['api_params']['cache'] = os.path.join(sickbeard.CACHE_DIR, 'indexers', self.name)
+            if sickbeard.PROXY_SETTING and sickbeard.PROXY_INDEXERS:
+                indexerConfig[self.indexerID]['api_params']['proxy'] = sickbeard.PROXY_SETTING
+
             return indexerConfig[self.indexerID]['api_params']
 
     @property
@@ -54,4 +65,9 @@ class indexerApi(object):
 
     @property
     def indexers(self):
-        return dict((x['id'], x['name']) for x in indexerConfig.values())
+        return dict((int(x['id']), x['name']) for x in indexerConfig.values())
+
+    @property
+    def session(self):
+        if self.indexerID:
+            return indexerConfig[self.indexerID]['session']

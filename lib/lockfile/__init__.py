@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 """
 lockfile.py - Platform-independent advisory file locks.
 
@@ -68,7 +70,7 @@ if not hasattr(threading.Thread, "get_name"):
 
 __all__ = ['Error', 'LockError', 'LockTimeout', 'AlreadyLocked',
            'LockFailed', 'UnlockError', 'NotLocked', 'NotMyLock',
-           'LinkLockFile', 'MkdirLockFile', 'SQLiteLockFile',
+           'LinkFileLock', 'MkdirFileLock', 'SQLiteFileLock',
            'LockBase', 'locked']
 
 class Error(Exception):
@@ -154,31 +156,9 @@ class NotMyLock(UnlockError):
     """
     pass
 
-class LockBase:
-    """Base class for platform-specific lock classes."""
-    def __init__(self, path, threaded=True, timeout=None):
-        """
-        >>> lock = LockBase('somefile')
-        >>> lock = LockBase('somefile', threaded=False)
-        """
+class _SharedBase(object):
+    def __init__(self, path):
         self.path = path
-        self.lock_file = os.path.abspath(path) + ".lock"
-        self.hostname = socket.gethostname()
-        self.pid = os.getpid()
-        if threaded:
-            t = threading.current_thread()
-            # Thread objects in Python 2.4 and earlier do not have ident
-            # attrs.  Worm around that.
-            ident = getattr(t, "ident", hash(t))
-            self.tname = "-%x" % (ident & 0xffffffff)
-        else:
-            self.tname = ""
-        dirname = os.path.dirname(self.lock_file)
-        self.unique_name = os.path.join(dirname,
-                                        "%s%s.%s" % (self.hostname,
-                                                     self.tname,
-                                                     self.pid))
-        self.timeout = timeout
 
     def acquire(self, timeout=None):
         """
@@ -204,6 +184,57 @@ class LockBase:
         """
         raise NotImplemented("implement in subclass")
 
+    def __enter__(self):
+        """
+        Context manager support.
+        """
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc):
+        """
+        Context manager support.
+        """
+        self.release()
+
+    def __repr__(self):
+        return "<%s: %r>" % (self.__class__.__name__, self.path)
+
+class LockBase(_SharedBase):
+    """Base class for platform-specific lock classes."""
+    def __init__(self, path, threaded=True, timeout=None):
+        """
+        >>> lock = LockBase('somefile')
+        >>> lock = LockBase('somefile', threaded=False)
+        """
+        super(LockBase, self).__init__(path)
+        self.lock_file = os.path.abspath(path) + ".lock"
+        self.hostname = socket.gethostname()
+        self.pid = os.getpid()
+        if threaded:
+            t = threading.current_thread()
+            # Thread objects in Python 2.4 and earlier do not have ident
+            # attrs.  Worm around that.
+            ident = getattr(t, "ident", hash(t))
+            self.tname = "-%x" % (ident & 0xffffffff)
+        else:
+            self.tname = ""
+        dirname = os.path.dirname(self.lock_file)
+
+        # unique name is mostly about the current process, but must
+        # also contain the path -- otherwise, two adjacent locked
+        # files conflict (one file gets locked, creating lock-file and
+        # unique file, the other one gets locked, creating lock-file
+        # and overwriting the already existing lock-file, then one
+        # gets unlocked, deleting both lock-file and unique file,
+        # finally the last lock errors out upon releasing.
+        self.unique_name = os.path.join(dirname,
+                                        "%s%s.%s%s" % (self.hostname,
+                                                       self.tname,
+                                                       self.pid,
+                                                       hash(self.path)))
+        self.timeout = timeout
+
     def is_locked(self):
         """
         Tell whether or not the file is locked.
@@ -221,19 +252,6 @@ class LockBase:
         Remove a lock.  Useful if a locking thread failed to unlock.
         """
         raise NotImplemented("implement in subclass")
-
-    def __enter__(self):
-        """
-        Context manager support.
-        """
-        self.acquire()
-        return self
-
-    def __exit__(self, *_exc):
-        """
-        Context manager support.
-        """
-        self.release()
 
     def __repr__(self):
         return "<%s: %r -- %r>" % (self.__class__.__name__, self.unique_name,

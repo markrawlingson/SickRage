@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -21,108 +22,105 @@ import threading
 
 from sickbeard import logger
 
+
 class QueuePriorities:
     LOW = 10
     NORMAL = 20
     HIGH = 30
 
-class GenericQueue(object):
 
+class GenericQueue(object):
     def __init__(self):
 
         self.currentItem = None
-        self.queue = []
 
-        self.thread = None
+        self.queue = []
 
         self.queue_name = "QUEUE"
 
         self.min_priority = 0
-        
-        self.currentItem = None
 
         self.lock = threading.Lock()
 
     def pause(self):
+        """Pauses this queue"""
         logger.log(u"Pausing queue")
         self.min_priority = 999999999999
-    
+
     def unpause(self):
+        """Unpauses this queue"""
         logger.log(u"Unpausing queue")
         self.min_priority = 0
 
     def add_item(self, item):
-        item.added = datetime.datetime.now()
-        self.queue.append(item)
-        
-        return item
+        """
+        Adds an item to this queue
+
+        :param item: Queue object to add
+        :return: item
+        """
+        with self.lock:
+            item.added = datetime.datetime.now()
+            self.queue.append(item)
+
+            return item
 
     def run(self, force=False):
+        """
+        Process items in this queue
 
-        # only start a new task if one isn't already going
-        if self.thread == None or self.thread.isAlive() == False:
-            # if the thread is dead then the current item should be finished
-            if self.currentItem != None:
-                self.currentItem.finish()
-                self.currentItem = None
+        :param force: Force queue processing (currently not implemented)
+        """
+        with self.lock:
+            # only start a new task if one isn't already going
+            if self.currentItem is None or not self.currentItem.isAlive():
 
-            # if there's something in the queue then run it in a thread and take it out of the queue
-            if len(self.queue) > 0:
+                # if the thread is dead then the current item should be finished
+                if self.currentItem:
+                    self.currentItem.finish()
+                    self.currentItem = None
 
-                # sort by priority
-                def sorter(x,y):
-                    """
-                    Sorts by priority descending then time ascending
-                    """
-                    if x.priority == y.priority:
-                        if y.added == x.added:
-                            return 0
-                        elif y.added < x.added:
-                            return 1
-                        elif y.added > x.added:
-                            return -1
-                    else:
-                        return y.priority-x.priority
+                # if there's something in the queue then run it in a thread and take it out of the queue
+                if len(self.queue) > 0:
 
-                self.queue.sort(cmp=sorter)
+                    # sort by priority
+                    def sorter(x, y):
+                        """
+                        Sorts by priority descending then time ascending
+                        """
+                        if x.priority == y.priority:
+                            if y.added == x.added:
+                                return 0
+                            elif y.added < x.added:
+                                return 1
+                            elif y.added > x.added:
+                                return -1
+                        else:
+                            return y.priority - x.priority
 
-                queueItem = self.queue[0]
+                    self.queue.sort(cmp=sorter)
+                    if self.queue[0].priority < self.min_priority:
+                        return
 
-                if queueItem.priority < self.min_priority:
-                    return
+                    # launch the queue item in a thread
+                    self.currentItem = self.queue.pop(0)
+                    self.currentItem.name = self.queue_name + '-' + self.currentItem.name
+                    self.currentItem.start()
 
-                # launch the queue item in a thread
-                # TODO: improve thread name
-                threadName = self.queue_name + '-' + queueItem.get_thread_name()
-                self.thread = threading.Thread(None, queueItem.execute, threadName)
-                self.thread.start()
+        self.amActive = False
 
-                self.currentItem = queueItem
+class QueueItem(threading.Thread):
+    def __init__(self, name, action_id=0):
+        super(QueueItem, self).__init__()
 
-                # take it out of the queue
-                del self.queue[0]
-
-class QueueItem:
-    def __init__(self, name, action_id = 0):
-        self.name = name
-
+        self.name = name.replace(" ", "-").upper()
         self.inProgress = False
-
         self.priority = QueuePriorities.NORMAL
-
-        self.thread_name = None
-
         self.action_id = action_id
-        
+        self.stop = threading.Event()
         self.added = None
 
-    def get_thread_name(self):
-        if self.thread_name:
-            return self.thread_name
-        else:
-            return self.name.replace(" ","-").upper()
-
-    def execute(self):
+    def run(self):
         """Implementing classes should call this"""
 
         self.inProgress = True
@@ -131,3 +129,5 @@ class QueueItem:
         """Implementing Classes should call this"""
 
         self.inProgress = False
+
+        threading.currentThread().name = self.name

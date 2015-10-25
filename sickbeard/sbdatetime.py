@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -21,6 +22,7 @@ import locale
 import functools
 
 import sickbeard
+from sickbeard.network_timezones import sb_timezone
 
 date_presets = ('%Y-%m-%d',
                 '%a, %Y-%m-%d',
@@ -52,6 +54,12 @@ date_presets = ('%Y-%m-%d',
                 '%d-%m-%y',
                 '%a, %d-%m-%y',
                 '%A, %d-%m-%y',
+                '%d/%m/%Y',
+                '%a, %d/%m/%Y',
+                '%A, %d/%m/%Y',
+                '%d/%m/%y',
+                '%a, %d/%m/%y',
+                '%A, %d/%m/%y',
                 '%d.%m.%Y',
                 '%a, %d.%m.%Y',
                 '%A, %d.%m.%Y',
@@ -94,20 +102,52 @@ class static_or_instance(object):
 # subclass datetime.datetime to add function to display custom date and time formats
 class sbdatetime(datetime.datetime):
     has_locale = True
-    ORIG_LC_TIME = locale.LC_TIME
+    en_US_norm = locale.normalize('en_US.utf-8')
+
+    @static_or_instance
+    def convert_to_setting(self, dt=None):
+        try:
+            if sickbeard.TIMEZONE_DISPLAY == 'local':
+                if self is None:
+                    return dt.astimezone(sb_timezone)
+                else:
+                    return self.astimezone(sb_timezone)
+            else:
+                if self is None:
+                    return dt
+                else:
+                    return self
+        except:
+            if self is None:
+                return dt
+            else:
+                return self
 
     # display Time in SickRage Format
     @static_or_instance
     def sbftime(self, dt=None, show_seconds=False, t_preset=None):
+        """
+        Display time in SR format
+        TODO: Rename this to srftime
 
-        try:locale.setlocale(locale.LC_TIME, self.ORIG_LC_TIME)
+        :param dt: datetime object
+        :param show_seconds: Boolean, show seconds
+        :param t_preset: Preset time format
+        :return: time string
+        """
+
+        try:locale.setlocale(locale.LC_TIME, '')
         except:pass
 
         try:
             if sbdatetime.has_locale:
-                locale.setlocale(locale.LC_TIME, 'us_US')
-        except:
-            sbdatetime.has_locale = False
+                locale.setlocale(locale.LC_TIME, 'en_US')
+        except Exception as e:
+            try:
+                if sbdatetime.has_locale:
+                    locale.setlocale(locale.LC_TIME, sbdatetime.en_US_norm)
+            except:
+                sbdatetime.has_locale = False
 
         strt = ''
         try:
@@ -129,7 +169,7 @@ class sbdatetime(datetime.datetime):
         finally:
             try:
                 if sbdatetime.has_locale:
-                    locale.setlocale(locale.LC_TIME, self.ORIG_LC_TIME)
+                    locale.setlocale(locale.LC_TIME, '')
             except:
                 sbdatetime.has_locale = False
 
@@ -138,9 +178,17 @@ class sbdatetime(datetime.datetime):
     # display Date in SickRage Format
     @static_or_instance
     def sbfdate(self, dt=None, d_preset=None):
+        """
+        Display date in SR format
+        TODO: Rename this to srfdate
+
+        :param dt: datetime object
+        :param d_preset: Preset date format
+        :return: date string
+        """
 
         try:
-            locale.setlocale(locale.LC_TIME, self.ORIG_LC_TIME)
+            locale.setlocale(locale.LC_TIME, '')
         except:
             pass
 
@@ -160,7 +208,7 @@ class sbdatetime(datetime.datetime):
         finally:
 
             try:
-                locale.setlocale(locale.LC_TIME, self.ORIG_LC_TIME)
+                locale.setlocale(locale.LC_TIME, '')
             except:
                 pass
 
@@ -169,9 +217,19 @@ class sbdatetime(datetime.datetime):
     # display Datetime in SickRage Format
     @static_or_instance
     def sbfdatetime(self, dt=None, show_seconds=False, d_preset=None, t_preset=None):
+        """
+        Show datetime in SR format
+        TODO: Rename this to srfdatetime
+
+        :param dt: datetime object
+        :param show_seconds: Boolean, show seconds as well
+        :param d_preset: Preset date format
+        :param t_preset: Preset time format
+        :return: datetime string
+        """
 
         try:
-            locale.setlocale(locale.LC_TIME, self.ORIG_LC_TIME)
+            locale.setlocale(locale.LC_TIME, '')
         except:
             pass
 
@@ -185,9 +243,13 @@ class sbdatetime(datetime.datetime):
                         strd = dt.strftime(sickbeard.DATE_PRESET)
                     try:
                         if sbdatetime.has_locale:
-                            locale.setlocale(locale.LC_TIME, 'us_US')
+                            locale.setlocale(locale.LC_TIME, 'en_US')
                     except:
-                        sbdatetime.has_locale = False
+                        try:
+                            if sbdatetime.has_locale:
+                                locale.setlocale(locale.LC_TIME, sbdatetime.en_US_norm)
+                        except:
+                            sbdatetime.has_locale = False
                     if t_preset is not None:
                         strd += u', ' + dt.strftime(t_preset)
                     elif show_seconds:
@@ -201,9 +263,13 @@ class sbdatetime(datetime.datetime):
                     strd = self.strftime(sickbeard.DATE_PRESET)
                 try:
                     if sbdatetime.has_locale:
-                        locale.setlocale(locale.LC_TIME, 'us_US')
+                        locale.setlocale(locale.LC_TIME, 'en_US')
                 except:
-                    sbdatetime.has_locale = False
+                    try:
+                        if sbdatetime.has_locale:
+                            locale.setlocale(locale.LC_TIME, sbdatetime.en_US_norm)
+                    except:
+                        sbdatetime.has_locale = False
                 if t_preset is not None:
                     strd += u', ' + self.strftime(t_preset)
                 elif show_seconds:
@@ -213,7 +279,7 @@ class sbdatetime(datetime.datetime):
         finally:
             try:
                 if sbdatetime.has_locale:
-                    locale.setlocale(locale.LC_TIME, self.ORIG_LC_TIME)
+                    locale.setlocale(locale.LC_TIME, '')
             except:
                 sbdatetime.has_locale = False
 

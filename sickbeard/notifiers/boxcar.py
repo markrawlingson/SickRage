@@ -23,25 +23,25 @@ import time
 import sickbeard
 
 from sickbeard import logger
-from sickbeard.common import notifyStrings, NOTIFY_SNATCH, NOTIFY_DOWNLOAD, NOTIFY_SUBTITLE_DOWNLOAD
-from sickbeard.exceptions import ex
+from sickbeard.common import notifyStrings, NOTIFY_SNATCH, NOTIFY_DOWNLOAD, NOTIFY_SUBTITLE_DOWNLOAD, NOTIFY_GIT_UPDATE, NOTIFY_GIT_UPDATE_TEXT
+from sickrage.helper.exceptions import ex
 
 API_URL = "https://boxcar.io/devices/providers/fWc4sgSmpcN6JujtBmR6/notifications"
 
 
 class BoxcarNotifier:
     def test_notify(self, boxcar_username):
-        return self._notify("This is a test notification from Sick Beard", "Test", boxcar_username, force=True)
+        return self._notifyBoxcar("This is a test notification from Sick Beard", "Test", boxcar_username, force=True)
 
     def _sendBoxcar(self, msg, title, email, subscribe=False):
         """
         Sends a boxcar notification to the address provided
-        
+
         msg: The message to send (unicode)
         title: The title of the message
         email: The email address to send the message to (or to subscribe with)
         subscribe: If true then instead of sending a message this function will send a subscription notification (optional, default is False)
-        
+
         returns: True if the message succeeded, False otherwise
         """
 
@@ -107,7 +107,7 @@ class BoxcarNotifier:
                 logger.log("Wrong data sent to boxcar", logger.ERROR)
                 return False
 
-        logger.log("Boxcar notification successful.", logger.MESSAGE)
+        logger.log("Boxcar notification successful.", logger.INFO)
         return True
 
     def notify_snatch(self, ep_name, title=notifyStrings[NOTIFY_SNATCH]):
@@ -122,6 +122,12 @@ class BoxcarNotifier:
     def notify_subtitle_download(self, ep_name, lang, title=notifyStrings[NOTIFY_SUBTITLE_DOWNLOAD]):
         if sickbeard.BOXCAR_NOTIFY_ONSUBTITLEDOWNLOAD:
             self._notifyBoxcar(title, ep_name + ": " + lang)
+
+    def notify_git_update(self, new_version = "??"):
+        if sickbeard.USE_BOXCAR:
+            update_text=notifyStrings[NOTIFY_GIT_UPDATE_TEXT]
+            title=notifyStrings[NOTIFY_GIT_UPDATE]
+            self._notifyBoxcar(title, update_text + new_version)
 
     def _notifyBoxcar(self, title, message, username=None, force=False):
         """

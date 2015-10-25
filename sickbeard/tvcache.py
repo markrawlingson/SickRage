@@ -18,31 +18,22 @@
 
 from __future__ import with_statement
 
-import os
-
 import time
 import datetime
-import urllib
-import urlparse
-import re
-import threading
-import sickbeard
+import itertools
+import urllib2
 
-from lib.shove import Shove
-from lib.feedcache import cache
+import sickbeard
 
 from sickbeard import db
 from sickbeard import logger
-from sickbeard.common import Quality, cpu_presets
-
-from sickbeard import helpers, show_name_helpers
-from sickbeard.exceptions import MultipleShowObjectsException
-from sickbeard.exceptions import AuthException
-from sickbeard import encodingKludge as ek
-
-from name_parser.parser import NameParser, InvalidNameException
-
-cache_lock = threading.Lock()
+from sickbeard.common import Quality
+from sickbeard import helpers
+from sickbeard.rssfeeds import RSSFeeds
+from name_parser.parser import NameParser, InvalidNameException, InvalidShowException
+from sickbeard import show_name_helpers
+from sickrage.helper.encoding import ss
+from sickrage.helper.exceptions import AuthException, ex
 
 
 class CacheDBConnection(db.DBConnection):
@@ -52,7 +43,25 @@ class CacheDBConnection(db.DBConnection):
         # Create the table if it's not already there
         try:
             if not self.hasTable(providerName):
-                self.action("CREATE TABLE [" + providerName + "] (name TEXT, season NUMERIC, episodes TEXT, indexerid NUMERIC, url TEXT, time NUMERIC, quality TEXT)")
+                self.action(
+                    "CREATE TABLE [" + providerName + "] (name TEXT, season NUMERIC, episodes TEXT, indexerid NUMERIC, url TEXT, time NUMERIC, quality TEXT, release_group TEXT)")
+            else:
+                sqlResults = self.select("SELECT url, COUNT(url) AS count FROM [" + providerName + "] GROUP BY url HAVING count > 1")
+
+                for cur_dupe in sqlResults:
+                    self.action("DELETE FROM [" + providerName + "] WHERE url = ?", [cur_dupe["url"]])
+
+            # add unique index to prevent further dupes from happening if one does not exist
+            self.action("CREATE UNIQUE INDEX IF NOT EXISTS idx_url ON [" + providerName + "] (url)")
+
+            # add release_group column to table if missing
+            if not self.hasColumn(providerName, 'release_group'):
+                self.addColumn(providerName, 'release_group', "TEXT", "")
+
+            # add version column to table if missing
+            if not self.hasColumn(providerName, 'version'):
+                self.addColumn(providerName, 'version', "NUMERIC", "-1")
+
         except Exception, e:
             if str(e) != "table [" + providerName + "] already exists":
                 raise
@@ -68,29 +77,28 @@ class CacheDBConnection(db.DBConnection):
 
 class TVCache():
     def __init__(self, provider):
-
         self.provider = provider
         self.providerID = self.provider.getID()
+        self.providerDB = None
         self.minTime = 10
 
     def _getDB(self):
+        # init provider database if not done already
+        if not self.providerDB:
+            self.providerDB = CacheDBConnection(self.providerID)
 
-        return CacheDBConnection(self.providerID)
+        return self.providerDB
 
     def _clearCache(self):
-        if not self.shouldClearCache():
-            return
+        if self.shouldClearCache():
+            myDB = self._getDB()
+            myDB.action("DELETE FROM [" + self.providerID + "] WHERE 1")
 
-        curDate = datetime.date.today() - datetime.timedelta(weeks=1)
-
-        myDB = self._getDB()
-        myDB.action("DELETE FROM [" + self.providerID + "] WHERE time < ?", [int(time.mktime(curDate.timetuple()))])
+    def _get_title_and_url(self, item):
+        return self.provider._get_title_and_url(item)
 
     def _getRSSData(self):
-
-        data = None
-
-        return data
+        return None
 
     def _checkAuth(self, data):
         return True
@@ -99,81 +107,63 @@ class TVCache():
         return True
 
     def updateCache(self):
-
-        # delete anything older then 7 days
-        logger.log(u"Clearing " + self.provider.name + " cache")
-        self._clearCache()
-
+        # check if we should update
         if not self.shouldUpdate():
             return
 
-        if self._checkAuth(None):
+        try:
             data = self._getRSSData()
-
-            # as long as the http request worked we count this as an update
-            if data:
-                self.setLastUpdate()
-            else:
-                return []
-
             if self._checkAuth(data):
-                items = data.entries
+                # clear cache
+                self._clearCache()
+
+                # set updated
+                self.setLastUpdate()
+
                 cl = []
-                for item in items:
+                for item in data['entries'] or []:
                     ci = self._parseItem(item)
                     if ci is not None:
                         cl.append(ci)
 
-                if cl:
+                if len(cl) > 0:
                     myDB = self._getDB()
                     myDB.mass_action(cl)
 
-            else:
-                raise AuthException(
-                    u"Your authentication credentials for " + self.provider.name + " are incorrect, check your config")
+        except AuthException, e:
+            logger.log(u"Authentication error: " + ex(e), logger.ERROR)
+        except Exception, e:
+            logger.log(u"Error while searching " + self.provider.name + ", skipping: " + repr(e), logger.DEBUG)
 
-        return []
+    def getRSSFeed(self, url, post_data=None, items=[]):
+        handlers = []
 
-    def getRSSFeed(self, url, post_data=None, request_headers=None):
-        # create provider storaqe cache
-        storage = Shove('sqlite:///' + ek.ek(os.path.join, sickbeard.CACHE_DIR, self.provider.name) + '.db')
-        fc = cache.Cache(storage)
+        if self.provider.proxy.isEnabled():
+            self.provider.headers.update({'Referer': self.provider.proxy.getProxyURL()})
+        elif sickbeard.PROXY_SETTING:
+            logger.log("Using proxy for url: " + url, logger.DEBUG)
+            scheme, address = urllib2.splittype(sickbeard.PROXY_SETTING)
+            address = sickbeard.PROXY_SETTING if scheme else 'http://' + sickbeard.PROXY_SETTING
+            handlers = [urllib2.ProxyHandler({'http': address, 'https': address})]
+            self.provider.headers.update({'Referer': address})
+        elif 'Referer' in self.provider.headers:
+            self.provider.headers.pop('Referer')
 
-        parsed = list(urlparse.urlparse(url))
-        parsed[2] = re.sub("/{2,}", "/", parsed[2])  # replace two or more / with one
-
-        if post_data:
-            url += urllib.urlencode(post_data)
-
-        f = fc.fetch(url, request_headers=request_headers)
-
-        if not f:
-            logger.log(u"Error loading " + self.providerID + " URL: " + url, logger.ERROR)
-            return None
-        elif 'error' in f.feed:
-            logger.log(u"Newznab ERROR:[%s] CODE:[%s]" % (f.feed['error']['description'], f.feed['error']['code']),
-                       logger.DEBUG)
-            return None
-        elif not f.entries:
-            logger.log(u"No items found on " + self.providerID + " using URL: " + url, logger.WARNING)
-            return None
-
-        storage.close()
-
-        return f
-
+        return RSSFeeds(self.providerID).getFeed(
+            self.provider.proxy._buildURL(url),
+            post_data,
+            self.provider.headers,
+            items,
+            handlers=handlers)
 
     def _translateTitle(self, title):
-        return title.replace(' ', '.')
-
+        return u'' + title.replace(' ', '.')
 
     def _translateLinkURL(self, url):
         return url.replace('&amp;', '&')
 
-
     def _parseItem(self, item):
-        title = item.title
-        url = item.link
+        title, url = self._get_title_and_url(item)
 
         self._checkItemAuth(title, url)
 
@@ -181,15 +171,13 @@ class TVCache():
             title = self._translateTitle(title)
             url = self._translateLinkURL(url)
 
-            logger.log(u"Checking if item from RSS feed is in the cache: " + title, logger.DEBUG)
+            logger.log(u"Attempting to add item to cache: " + title, logger.DEBUG)
             return self._addCacheEntry(title, url)
 
         else:
             logger.log(
                 u"The data returned from the " + self.provider.name + " feed is incomplete, this result is unusable",
                 logger.DEBUG)
-            return None
-
 
     def _getLastUpdate(self):
         myDB = self._getDB()
@@ -241,52 +229,45 @@ class TVCache():
 
     def shouldUpdate(self):
         # if we've updated recently then skip the update
-        #if datetime.datetime.today() - self.lastUpdate < datetime.timedelta(minutes=self.minTime):
-        #    logger.log(u"Last update was too soon, using old cache: today()-" + str(self.lastUpdate) + "<" + str(
-        #        datetime.timedelta(minutes=self.minTime)), logger.DEBUG)
-        #    return False
+        if datetime.datetime.today() - self.lastUpdate < datetime.timedelta(minutes=self.minTime):
+            logger.log(u"Last update was too soon, using old cache: " + str(self.lastUpdate) + ". Updated less then " + str(self.minTime) + " minutes ago", logger.DEBUG)
+            return False
 
         return True
 
     def shouldClearCache(self):
         # if daily search hasn't used our previous results yet then don't clear the cache
         if self.lastUpdate > self.lastSearch:
-            logger.log(
-                u"Daily search has not yet searched our last cache results, skipping clearig cache ...", logger.DEBUG)
             return False
 
         return True
 
-    def _addCacheEntry(self, name, url, quality=None):
+    def _addCacheEntry(self, name, url, parse_result=None, indexer_id=0):
 
-        try:
-            myParser = NameParser(convert=True)
-            parse_result = myParser.parse(name)
-        except InvalidNameException:
-            logger.log(u"Unable to parse the filename " + name + " into a valid episode", logger.DEBUG)
-            return None
+        # check if we passed in a parsed result or should we try and create one
+        if not parse_result:
 
-        if not parse_result or not parse_result.series_name:
-            return None
+            # create showObj from indexer_id if available
+            showObj = None
+            if indexer_id:
+                showObj = helpers.findCertainShow(sickbeard.showList, indexer_id)
 
-        if not parse_result.show:
-            logger.log(u"No match for show: [" + parse_result.series_name + "], not caching ...", logger.DEBUG)
-            return None
+            try:
+                myParser = NameParser(showObj=showObj)
+                parse_result = myParser.parse(name)
+            except InvalidNameException:
+                logger.log(u"Unable to parse the filename " + name + " into a valid episode", logger.DEBUG)
+                return None
+            except InvalidShowException:
+                logger.log(u"Unable to parse the filename " + name + " into a valid show", logger.DEBUG)
+                return None
 
-        season = episodes = None
-        if parse_result.air_by_date or parse_result.sports:
-            airdate = parse_result.air_date.toordinal() or parse_result.sports_event_date.toordinal()
+            if not parse_result or not parse_result.series_name:
+                return None
 
-            myDB = db.DBConnection()
-            sql_results = myDB.select(
-                "SELECT season, episode FROM tv_episodes WHERE showid = ? AND indexer = ? AND airdate = ?",
-                [parse_result.show.indexerid, parse_result.show.indexer, airdate])
-            if sql_results > 0:
-                season = int(sql_results[0]["season"])
-                episodes = [int(sql_results[0]["episode"])]
-        else:
-            season = parse_result.season_number if parse_result.season_number != None else 1
-            episodes = parse_result.episode_numbers
+        # if we made it this far then lets add the parsed result to cache for usager later on
+        season = parse_result.season_number if parse_result.season_number else 1
+        episodes = parse_result.episode_numbers
 
         if season and episodes:
             # store episodes as a seperated string
@@ -296,22 +277,26 @@ class TVCache():
             curTimestamp = int(time.mktime(datetime.datetime.today().timetuple()))
 
             # get quality of release
-            if quality is None:
-                quality = Quality.sceneQuality(name, parse_result.is_anime)
+            quality = parse_result.quality
 
-            if not isinstance(name, unicode):
-                name = unicode(name, 'utf-8')
+            name = ss(name)
+
+            # get release group
+            release_group = parse_result.release_group
+
+            # get version
+            version = parse_result.version
 
             logger.log(u"Added RSS item: [" + name + "] to cache: [" + self.providerID + "]", logger.DEBUG)
 
             return [
-                "INSERT INTO [" + self.providerID + "] (name, season, episodes, indexerid, url, time, quality) VALUES (?,?,?,?,?,?,?)",
-                [name, season, episodeText, parse_result.show.indexerid, url, curTimestamp, quality]]
+                "INSERT OR IGNORE INTO [" + self.providerID + "] (name, season, episodes, indexerid, url, time, quality, release_group, version) VALUES (?,?,?,?,?,?,?,?,?)",
+                [name, season, episodeText, parse_result.show.indexerid, url, curTimestamp, quality, release_group, version]]
 
 
-    def searchCache(self, episodes, manualSearch=False):
-        neededEps = self.findNeededEpisodes(episodes, manualSearch)
-        return neededEps
+    def searchCache(self, episode, manualSearch=False, downCurQuality=False):
+        neededEps = self.findNeededEpisodes(episode, manualSearch, downCurQuality)
+        return neededEps[episode] if episode in neededEps else []
 
     def listPropers(self, date=None, delimiter="."):
         myDB = self._getDB()
@@ -323,69 +308,86 @@ class TVCache():
         return filter(lambda x: x['indexerid'] != 0, myDB.select(sql))
 
 
-    def findNeededEpisodes(self, episodes, manualSearch=False):
+    def findNeededEpisodes(self, episode, manualSearch=False, downCurQuality=False):
         neededEps = {}
+        cl = []
 
-        for epObj in episodes:
-            myDB = self._getDB()
+        myDB = self._getDB()
+        if not episode:
+            sqlResults = myDB.select("SELECT * FROM [" + self.providerID + "]")
+        elif type(episode) != list:
             sqlResults = myDB.select(
                 "SELECT * FROM [" + self.providerID + "] WHERE indexerid = ? AND season = ? AND episodes LIKE ?",
-                [epObj.show.indexerid, epObj.season, "%|" + str(epObj.episode) + "|%"])
+                [episode.show.indexerid, episode.season, "%|" + str(episode.episode) + "|%"])
+        else:
+            for epObj in episode:
+                cl.append([
+                    "SELECT * FROM [" + self.providerID + "] WHERE indexerid = ? AND season = ? AND episodes LIKE ? AND quality IN (" + ",".join(
+                        [str(x) for x in epObj.wantedQuality]) + ")",
+                    [epObj.show.indexerid, epObj.season, "%|" + str(epObj.episode) + "|%"]])
 
-            # for each cache entry
-            for curResult in sqlResults:
+            sqlResults = myDB.mass_action(cl, fetchall=True)
+            sqlResults = list(itertools.chain(*sqlResults))
 
-                # skip non-tv crap (but allow them for Newzbin cause we assume it's filtered well)
-                if self.providerID != 'newzbin' and not show_name_helpers.filterBadReleases(curResult["name"]):
-                    continue
+        # for each cache entry
+        for curResult in sqlResults:
+            # ignored/required words, and non-tv junk
+            if not show_name_helpers.filterBadReleases(curResult["name"]):
+                continue
 
-                # get the show object, or if it's not one of our shows then ignore it
-                try:
-                    showObj = helpers.findCertainShow(sickbeard.showList, int(curResult["indexerid"]))
-                except MultipleShowObjectsException:
-                    showObj = None
+            # get the show object, or if it's not one of our shows then ignore it
+            showObj = helpers.findCertainShow(sickbeard.showList, int(curResult["indexerid"]))
+            if not showObj:
+                continue
 
-                if not showObj:
-                    continue
+            # skip if provider is anime only and show is not anime
+            if self.provider.anime_only and not showObj.is_anime:
+                logger.log(u"" + str(showObj.name) + " is not an anime, skiping", logger.DEBUG)
+                continue
 
-                # get season and ep data (ignoring multi-eps for now)
-                curSeason = int(curResult["season"])
-                if curSeason == -1:
-                    continue
-                curEp = curResult["episodes"].split("|")[1]
-                if not curEp:
-                    continue
-                curEp = int(curEp)
-                curQuality = int(curResult["quality"])
+            # get season and ep data (ignoring multi-eps for now)
+            curSeason = int(curResult["season"])
+            if curSeason == -1:
+                continue
 
-                # if the show says we want that episode then add it to the list
-                if not showObj.wantEpisode(curSeason, curEp, curQuality, manualSearch):
-                    logger.log(u"Skipping " + curResult["name"] + " because we don't want an episode that's " +
-                               Quality.qualityStrings[curQuality], logger.DEBUG)
-                else:
+            curEp = curResult["episodes"].split("|")[1]
+            if not curEp:
+                continue
 
-                    if not epObj:
-                        epObj = showObj.getEpisode(curSeason, curEp)
+            curEp = int(curEp)
 
-                    # build a result object
-                    title = curResult["name"]
-                    url = curResult["url"]
+            curQuality = int(curResult["quality"])
+            curReleaseGroup = curResult["release_group"]
+            curVersion = curResult["version"]
 
-                    logger.log(u"Found result " + title + " at " + url)
+            # if the show says we want that episode then add it to the list
+            if not showObj.wantEpisode(curSeason, curEp, curQuality, manualSearch, downCurQuality):
+                logger.log(u"Skipping " + curResult["name"] + " because we don't want an episode that's " +
+                           Quality.qualityStrings[curQuality], logger.INFO)
+                continue
 
-                    result = self.provider.getResult([epObj])
-                    result.url = url
-                    result.name = title
-                    result.quality = curQuality
-                    result.content = self.provider.getURL(url) \
-                        if self.provider.providerType == sickbeard.providers.generic.GenericProvider.TORRENT \
-                           and not url.startswith('magnet') else None
+            epObj = showObj.getEpisode(curSeason, curEp)
 
-                    # add it to the list
-                    if epObj not in neededEps:
-                        neededEps[epObj] = [result]
-                    else:
-                        neededEps[epObj].append(result)
+            # build a result object
+            title = curResult["name"]
+            url = curResult["url"]
+
+            logger.log(u"Found result " + title + " at " + url)
+
+            result = self.provider.getResult([epObj])
+            result.show = showObj
+            result.url = url
+            result.name = title
+            result.quality = curQuality
+            result.release_group = curReleaseGroup
+            result.version = curVersion
+            result.content = None
+
+            # add it to the list
+            if epObj not in neededEps:
+                neededEps[epObj] = [result]
+            else:
+                neededEps[epObj].append(result)
 
         # datetime stamp this search so cache gets cleared
         self.setLastSearch()

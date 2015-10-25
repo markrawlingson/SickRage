@@ -29,6 +29,7 @@ from sickbeard import logger
 from sickbeard import ui
 from sickbeard import common
 
+
 class BacklogSearchScheduler(scheduler.Scheduler):
     def forceSearch(self):
         self.action._set_lastBacklog(1)
@@ -45,7 +46,7 @@ class BacklogSearcher:
     def __init__(self):
 
         self._lastBacklog = self._get_lastBacklog()
-        self.cycleTime = 7
+        self.cycleTime = sickbeard.BACKLOG_FREQUENCY / 60 / 24
         self.lock = threading.Lock()
         self.amActive = False
         self.amPaused = False
@@ -69,26 +70,26 @@ class BacklogSearcher:
 
     def searchBacklog(self, which_shows=None):
 
+        if self.amActive:
+            logger.log(u"Backlog is still running, not starting it again", logger.DEBUG)
+            return
+
+        self.amActive = True
+        self.amPaused = False
+
         if which_shows:
             show_list = which_shows
         else:
             show_list = sickbeard.showList
-
-        if self.amActive:
-            logger.log(u"Backlog is still running, not starting it again", logger.DEBUG)
-            return
 
         self._get_lastBacklog()
 
         curDate = datetime.date.today().toordinal()
         fromDate = datetime.date.fromordinal(1)
 
-        if not which_shows and not curDate - self._lastBacklog >= self.cycleTime:
-            logger.log(u"Running limited backlog on recently missed episodes only")
-            fromDate = datetime.date.today() - datetime.timedelta(days=7)
-
-        self.amActive = True
-        self.amPaused = False
+        if not which_shows and not ((curDate - self._lastBacklog) >= self.cycleTime):
+            logger.log(u"Running limited backlog on missed episodes " + str(sickbeard.BACKLOG_DAYS) + " day(s) and older only")
+            fromDate = datetime.date.today() - datetime.timedelta(days=sickbeard.BACKLOG_DAYS)
 
         # go through non air-by-date shows and see if they need any episodes
         for curShow in show_list:
@@ -98,12 +99,13 @@ class BacklogSearcher:
 
             segments = self._get_segments(curShow, fromDate)
 
-            if len(segments):
-                backlog_queue_item = search_queue.BacklogQueueItem(curShow, segments)
-                sickbeard.searchQueueScheduler.action.add_item(backlog_queue_item)  #@UndefinedVariable
+            for season, segment in segments.iteritems():
+                self.currentSearchInfo = {'title': curShow.name + " Season " + str(season)}
+
+                backlog_queue_item = search_queue.BacklogQueueItem(curShow, segment)
+                sickbeard.searchQueueScheduler.action.add_item(backlog_queue_item)  # @UndefinedVariable
             else:
-                logger.log(u"Nothing needs to be downloaded for " + str(curShow.name) + ", skipping this season",
-                           logger.DEBUG)
+                logger.log(u"Nothing needs to be downloaded for {show_name}, skipping".format(show_name=curShow.name),logger.DEBUG)
 
         # don't consider this an actual backlog search if we only did recent eps
         # or if we only did certain shows
@@ -133,41 +135,42 @@ class BacklogSearcher:
         return self._lastBacklog
 
     def _get_segments(self, show, fromDate):
-        anyQualities, bestQualities = common.Quality.splitQuality(show.quality)  #@UnusedVariable
+        if show.paused:
+            logger.log(u"Skipping backlog for {show_name} because the show is paused".format(show_name=show.name), logger.DEBUG)
+            return {}
 
-        logger.log(u"Seeing if we need anything from " + show.name)
+        anyQualities, bestQualities = common.Quality.splitQuality(show.quality)  # @UnusedVariable
+
+        logger.log(u"Seeing if we need anything from {show_name}".format(show_name=show.name), logger.DEBUG)
 
         myDB = db.DBConnection()
-        if show.air_by_date:
-            sqlResults = myDB.select(
-                "SELECT ep.status, ep.season, ep.episode FROM tv_episodes ep, tv_shows show WHERE season != 0 AND ep.showid = show.indexer_id AND show.paused = 0 ANd ep.airdate > ? AND ep.showid = ? AND show.air_by_date = 1",
+        sqlResults = myDB.select("SELECT status, season, episode FROM tv_episodes WHERE season > 0 AND airdate > ? AND showid = ?",
                 [fromDate.toordinal(), show.indexerid])
-        else:
-            sqlResults = myDB.select(
-                "SELECT status, season, episode FROM tv_episodes WHERE showid = ? AND season > 0 and airdate > ?",
-                [show.indexerid, fromDate.toordinal()])
 
         # check through the list of statuses to see if we want any
         wanted = {}
         for result in sqlResults:
-            curCompositeStatus = int(result["status"])
+            curCompositeStatus = int(result["status"] or -1)
             curStatus, curQuality = common.Quality.splitCompositeStatus(curCompositeStatus)
 
             if bestQualities:
                 highestBestQuality = max(bestQualities)
+                lowestBestQuality = min(bestQualities)
             else:
                 highestBestQuality = 0
+                lowestBestQuality=0
+
 
             # if we need a better one then say yes
-            if (curStatus in (common.DOWNLOADED, common.SNATCHED, common.SNATCHED_PROPER,
-                              common.SNATCHED_BEST) and curQuality < highestBestQuality) or curStatus == common.WANTED:
-
+            if (curStatus in (common.DOWNLOADED, common.SNATCHED, common.SNATCHED_PROPER) and curQuality < highestBestQuality) or curStatus == common.WANTED:
                 epObj = show.getEpisode(int(result["season"]), int(result["episode"]))
 
-                if epObj.season in wanted:
-                    wanted[epObj.season].append(epObj)
-                else:
-                    wanted[epObj.season] = [epObj]
+                # only fetch if not archive on first match, or if show is lowest than the lower expected quality
+                if(epObj.show.archive_firstmatch == 0 or curQuality < lowestBestQuality):
+                    if epObj.season not in wanted:
+                        wanted[epObj.season] = [epObj]
+                    else:
+                        wanted[epObj.season].append(epObj)
 
         return wanted
 

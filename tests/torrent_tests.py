@@ -19,16 +19,17 @@
 
 from __future__ import with_statement
 
-import unittest
 import sys, os.path
+sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '../lib')))
+sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import unittest
+
 import urlparse
-
-sys.path.append(os.path.abspath('..'))
-sys.path.append(os.path.abspath('../lib'))
-
 import test_lib as test
 from bs4 import BeautifulSoup
 from sickbeard.helpers import getURL
+import requests
 
 class TorrentBasicTests(test.SickbeardTestDBCase):
 
@@ -36,7 +37,7 @@ class TorrentBasicTests(test.SickbeardTestDBCase):
         self.url = 'http://kickass.to/'
         searchURL = 'http://kickass.to/usearch/American%20Dad%21%20S08%20-S08E%20category%3Atv/?field=seeders&sorder=desc'
 
-        html = getURL(searchURL)
+        html = getURL(searchURL, session=requests.Session())
         if not html:
             return
 
@@ -44,6 +45,9 @@ class TorrentBasicTests(test.SickbeardTestDBCase):
 
         torrent_table = soup.find('table', attrs={'class': 'data'})
         torrent_rows = torrent_table.find_all('tr') if torrent_table else []
+
+        # cleanup memory
+        soup.clear(True)
 
         #Continue only if one Release is found
         if len(torrent_rows) < 2:
@@ -69,7 +73,8 @@ class TorrentBasicTests(test.SickbeardTestDBCase):
 
 if __name__ == "__main__":
     print "=================="
-    print "STARTING - XEM Scene Numbering TESTS"
+    print "STARTING - Torrent Basic TESTS"
     print "=================="
     print "######################################################################"
     suite = unittest.TestLoader().loadTestsFromTestCase(TorrentBasicTests)
+    unittest.TextTestRunner(verbosity=2).run(suite)

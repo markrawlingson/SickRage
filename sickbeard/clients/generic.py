@@ -5,11 +5,10 @@ from base64 import b16encode, b32decode
 
 import sickbeard
 from sickbeard import logger
-from sickbeard.exceptions import ex
-from sickbeard.clients import http_error_code
-from lib.bencode import bencode, bdecode
-from lib import requests
-from lib.requests import exceptions
+from . import http_error_code
+from bencode import bencode, bdecode
+import requests
+from bencode.BTL import BTFailure
 
 class GenericClient(object):
     def __init__(self, name, host=None, username=None, password=None):
@@ -18,12 +17,13 @@ class GenericClient(object):
         self.username = sickbeard.TORRENT_USERNAME if username is None else username
         self.password = sickbeard.TORRENT_PASSWORD if password is None else password
         self.host = sickbeard.TORRENT_HOST if host is None else host
+        self.rpcurl = sickbeard.TORRENT_RPCURL
 
         self.url = None
         self.response = None
         self.auth = None
         self.last_time = time.time()
-        self.session = requests.session()
+        self.session = requests.Session()
         self.session.auth = (self.username, self.password)
 
     def _request(self, method='get', params={}, data=None, files=None):
@@ -44,25 +44,25 @@ class GenericClient(object):
             logger.DEBUG)
 
         if not self.auth:
-            logger.log(self.name + u': Authentication Failed', logger.ERROR)
+            logger.log(self.name + u': Authentication Failed', logger.WARNING)
             return False
         try:
             self.response = self.session.__getattribute__(method)(self.url, params=params, data=data, files=files,
-                                                                  timeout=20, verify=False)
+                                                                  timeout=120, verify=False)
         except requests.exceptions.ConnectionError, e:
-            logger.log(self.name + u': Unable to connect ' + ex(e), logger.ERROR)
+            logger.log(self.name + u': Unable to connect ' + str(e), logger.ERROR)
             return False
         except (requests.exceptions.MissingSchema, requests.exceptions.InvalidURL):
             logger.log(self.name + u': Invalid Host', logger.ERROR)
             return False
         except requests.exceptions.HTTPError, e:
-            logger.log(self.name + u': Invalid HTTP Request ' + ex(e), logger.ERROR)
+            logger.log(self.name + u': Invalid HTTP Request ' + str(e), logger.ERROR)
             return False
         except requests.exceptions.Timeout, e:
-            logger.log(self.name + u': Connection Timeout ' + ex(e), logger.ERROR)
+            logger.log(self.name + u': Connection Timeout ' + str(e), logger.WARNING)
             return False
         except Exception, e:
-            logger.log(self.name + u': Unknown exception raised when send torrent to ' + self.name + ': ' + ex(e),
+            logger.log(self.name + u': Unknown exception raised when send torrent to ' + self.name + ': ' + str(e),
                        logger.ERROR)
             return False
 
@@ -143,14 +143,28 @@ class GenericClient(object):
     def _get_torrent_hash(self, result):
 
         if result.url.startswith('magnet'):
-            torrent_hash = re.findall('urn:btih:([\w]{32,40})', result.url)[0]
-            if len(torrent_hash) == 32:
-                torrent_hash = b16encode(b32decode(torrent_hash)).lower()
+            result.hash = re.findall('urn:btih:([\w]{32,40})', result.url)[0]
+            if len(result.hash) == 32:
+                result.hash = b16encode(b32decode(result.hash)).lower()
         else:
-            info = bdecode(result.content)["info"]
-            torrent_hash = sha1(bencode(info)).hexdigest()
+            if not result.content:
+                logger.log('Torrent without content', logger.ERROR)
+                raise Exception('Torrent without content')
 
-        return torrent_hash
+            try:
+                torrent_bdecode = bdecode(result.content)
+            except BTFailure as e:
+                logger.log('Unable to bdecode torrent', logger.ERROR)
+                logger.log('Torrent bencoded data: {0}'.format(str(result.content)), logger.DEBUG)
+                raise
+            try:
+                info = torrent_bdecode["info"]
+            except Exception as e:
+                logger.log('Unable to find info field in torrent', logger.ERROR)
+                raise
+            result.hash = sha1(bencode(info)).hexdigest()
+
+        return result
 
     def sendTORRENT(self, result):
 
@@ -163,8 +177,11 @@ class GenericClient(object):
             return r_code
 
         try:
+            # Sets per provider seed ratio
+            result.ratio = result.provider.seedRatio()
 
-            result.hash = self._get_torrent_hash(result)
+            # lazy fix for now, I'm sure we already do this somewhere else too
+            result = self._get_torrent_hash(result)
 
             if result.url.startswith('magnet'):
                 r_code = self._add_torrent_uri(result)
@@ -194,8 +211,8 @@ class GenericClient(object):
                 logger.log(self.name + u': Unable to set priority for Torrent', logger.ERROR)
 
         except Exception, e:
-            logger.log(self.name + u': Failed Sending Torrent ', logger.ERROR)
-            logger.log(self.name + u': Exception raised when sending torrent: ' + ex(e), logger.DEBUG)
+            logger.log(self.name + u': Failed Sending Torrent', logger.ERROR)
+            logger.log(self.name + u': Exception raised when sending torrent: ' + str(result) + u'. Error: ' + str(e), logger.DEBUG)
             return r_code
 
         return r_code
@@ -203,7 +220,7 @@ class GenericClient(object):
     def testAuthentication(self):
 
         try:
-            self.response = self.session.get(self.url, timeout=20, verify=False)
+            self.response = self.session.get(self.url, timeout=120, verify=False)
         except requests.exceptions.ConnectionError, e:
             return False, 'Error: ' + self.name + ' Connection Error'
         except (requests.exceptions.MissingSchema, requests.exceptions.InvalidURL):

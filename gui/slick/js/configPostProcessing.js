@@ -1,5 +1,4 @@
 $(document).ready(function () {
-
     // http://stackoverflow.com/questions/2219924/idiomatic-jquery-delayed-event-only-after-a-short-pause-in-typing-e-g-timew
     var typewatch = (function () {
         var timer = 0;
@@ -9,176 +8,192 @@ $(document).ready(function () {
         };
     })();
 
-	function israr_supported() {
-		var pattern = $('#naming_pattern').val();
-		$.get(sbRoot + '/config/postProcessing/isRarSupported', 
-        	function (data) {
-                if (data == "supported") {
-                } else {
-                    $('#unpack').qtip('option', {
-                        'content.text': 'Unrar Executable not found.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-				    });
-					$('#unpack').qtip('toggle', true);
-                    $('#unpack').css('background-color', '#FFFFDD');
-					
-                }
-            });
-	}
-	
+    function israr_supported() {
+        var pattern = $('#naming_pattern').val();
+        $.get(srRoot + '/config/postProcessing/isRarSupported', function (data) {
+            if (data !== "supported") {
+                $('#unpack').qtip('option', {
+                    'content.text': 'Unrar Executable not found.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#unpack').qtip('toggle', true);
+                $('#unpack').css('background-color', '#FFFFDD');
+            }
+        });
+    }
+
     function fill_examples() {
         var pattern = $('#naming_pattern').val();
         var multi = $('#naming_multi_ep :selected').val();
         var anime_type = $('input[name="naming_anime"]:checked').val();
 
-        $.get(sbRoot + '/config/postProcessing/testNaming', {pattern: pattern, anime_type: 3},
-            function (data) {
-                if (data) {
-                    $('#naming_example').text(data + '.ext');
-                    $('#naming_example_div').show();
-                } else {
-                    $('#naming_example_div').hide();
-                }
-            });
+        $.get(srRoot + '/config/postProcessing/testNaming', {pattern: pattern, anime_type: 3}, function (data) {
+            if (data) {
+                $('#naming_example').text(data + '.ext');
+                $('#naming_example_div').show();
+            } else {
+                $('#naming_example_div').hide();
+            }
+        });
 
-        $.get(sbRoot + '/config/postProcessing/testNaming', {pattern: pattern, multi: multi, anime_type: 3},
-            function (data) {
-                if (data) {
-                    $('#naming_example_multi').text(data + '.ext');
-                    $('#naming_example_multi_div').show();
-                } else {
-                    $('#naming_example_multi_div').hide();
-                }
-            });
+        $.get(srRoot + '/config/postProcessing/testNaming', {pattern: pattern, multi: multi, anime_type: 3}, function (data) {
+            if (data) {
+                $('#naming_example_multi').text(data + '.ext');
+                $('#naming_example_multi_div').show();
+            } else {
+                $('#naming_example_multi_div').hide();
+            }
+        });
 
-        $.get(sbRoot + '/config/postProcessing/testNaming', {pattern: pattern, anime_type: anime_type},
-            function (data) {
-                if (data) {
-                    $('#naming_example_anime').text(data + '.ext');
-                    $('#naming_example_anime_div').show();
-                } else {
-                    $('#naming_example_anime_div').hide();
-                }
-            });
-
-        $.get(sbRoot + '/config/postProcessing/testNaming', {pattern: pattern, multi: multi, anime_type: anime_type},
-            function (data) {
-                if (data) {
-                    $('#naming_example_multi_anime').text(data + '.ext');
-                    $('#naming_example_multi_anime_div').show();
-                } else {
-                    $('#naming_example_multi_anime_div').hide();
-                }
-            });
-
-        $.get(sbRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, multi: multi, anime_type: anime_type},
-            function (data) {
-                if (data == "invalid") {
-                    $('#naming_pattern').qtip('option', {
-                        'content.text': 'This pattern is invalid.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-                    });
-                    $('#naming_pattern').qtip('toggle', true);
-                    $('#naming_pattern').css('background-color', '#FFDDDD');
-                } else if (data == "seasonfolders") {
-                    $('#naming_pattern').qtip('option', {
-                        'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-                    });
-                    $('#naming_pattern').qtip('toggle', true);
-                    $('#naming_pattern').css('background-color', '#FFFFDD');
-                } else {
-                    $('#naming_pattern').qtip('option', {
-                        'content.text': 'This pattern is valid.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-green'
-                    });
-                    $('#naming_pattern').qtip('toggle', false);
-                    $('#naming_pattern').css('background-color', '#FFFFFF');
-                }
-            });
-
+        $.get(srRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, multi: multi, anime_type: anime_type}, function (data) {
+            if (data == "invalid") {
+                $('#naming_pattern').qtip('option', {
+                    'content.text': 'This pattern is invalid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_pattern').qtip('toggle', true);
+                $('#naming_pattern').css('background-color', '#FFDDDD');
+            } else if (data == "seasonfolders") {
+                $('#naming_pattern').qtip('option', {
+                    'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_pattern').qtip('toggle', true);
+                $('#naming_pattern').css('background-color', '#FFFFDD');
+            } else {
+                $('#naming_pattern').qtip('option', {
+                    'content.text': 'This pattern is valid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-green'
+                });
+                $('#naming_pattern').qtip('toggle', false);
+                $('#naming_pattern').css('background-color', '#FFFFFF');
+            }
+        });
     }
 
     function fill_abd_examples() {
         var pattern = $('#naming_abd_pattern').val();
 
-        $.get(sbRoot + '/config/postProcessing/testNaming', {pattern: pattern, abd: 'True'},
-            function (data) {
-                if (data) {
-                    $('#naming_abd_example').text(data + '.ext');
-                    $('#naming_abd_example_div').show();
-                } else {
-                    $('#naming_abd_example_div').hide();
-                }
-            });
+        $.get(srRoot + '/config/postProcessing/testNaming', {pattern: pattern, abd: 'True'}, function (data) {
+            if (data) {
+                $('#naming_abd_example').text(data + '.ext');
+                $('#naming_abd_example_div').show();
+            } else {
+                $('#naming_abd_example_div').hide();
+            }
+        });
 
-        $.get(sbRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, abd: 'True'},
-            function (data) {
-                if (data == "invalid") {
-                    $('#naming_abd_pattern').qtip('option', {
-                        'content.text': 'This pattern is invalid.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-                    });
-                    $('#naming_abd_pattern').qtip('toggle', true);
-                    $('#naming_abd_pattern').css('background-color', '#FFDDDD');
-                } else if (data == "seasonfolders") {
-                    $('#naming_abd_pattern').qtip('option', {
-                        'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-                    });
-                    $('#naming_abd_pattern').qtip('toggle', true);
-                    $('#naming_abd_pattern').css('background-color', '#FFFFDD');
-                } else {
-                    $('#naming_abd_pattern').qtip('option', {
-                        'content.text': 'This pattern is valid.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-green'
-                    });
-                    $('#naming_abd_pattern').qtip('toggle', false);
-                    $('#naming_abd_pattern').css('background-color', '#FFFFFF');
-                }
-            });
-
+        $.get(srRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, abd: 'True'}, function (data) {
+            if (data == "invalid") {
+                $('#naming_abd_pattern').qtip('option', {
+                    'content.text': 'This pattern is invalid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_abd_pattern').qtip('toggle', true);
+                $('#naming_abd_pattern').css('background-color', '#FFDDDD');
+            } else if (data == "seasonfolders") {
+                $('#naming_abd_pattern').qtip('option', {
+                    'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_abd_pattern').qtip('toggle', true);
+                $('#naming_abd_pattern').css('background-color', '#FFFFDD');
+            } else {
+                $('#naming_abd_pattern').qtip('option', {
+                    'content.text': 'This pattern is valid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-green'
+                });
+                $('#naming_abd_pattern').qtip('toggle', false);
+                $('#naming_abd_pattern').css('background-color', '#FFFFFF');
+            }
+        });
     }
 
     function fill_sports_examples() {
         var pattern = $('#naming_sports_pattern').val();
 
-        $.get(sbRoot + '/config/postProcessing/testNaming', {pattern: pattern, sports: 'True'},
-            function (data) {
-                if (data) {
-                    $('#naming_sports_example').text(data + '.ext');
-                    $('#naming_sports_example_div').show();
-                } else {
-                    $('#naming_sports_example_div').hide();
-                }
-            });
+        $.get(srRoot + '/config/postProcessing/testNaming', {pattern: pattern, sports: 'True'}, function (data) {
+            if (data) {
+                $('#naming_sports_example').text(data + '.ext');
+                $('#naming_sports_example_div').show();
+            } else {
+                $('#naming_sports_example_div').hide();
+            }
+        });
 
-        $.get(sbRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, sports: 'True'},
-            function (data) {
-                if (data == "invalid") {
-                    $('#naming_sports_pattern').qtip('option', {
-                        'content.text': 'This pattern is invalid.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-                    });
-                    $('#naming_sports_pattern').qtip('toggle', true);
-                    $('#naming_sports_pattern').css('background-color', '#FFDDDD');
-                } else if (data == "seasonfolders") {
-                    $('#naming_sports_pattern').qtip('option', {
-                        'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-red'
-                    });
-                    $('#naming_sports_pattern').qtip('toggle', true);
-                    $('#naming_sports_pattern').css('background-color', '#FFFFDD');
-                } else {
-                    $('#naming_sports_pattern').qtip('option', {
-                        'content.text': 'This pattern is valid.',
-                        'style.classes': 'qtip-rounded qtip-shadow qtip-green'
-                    });
-                    $('#naming_sports_pattern').qtip('toggle', false);
-                    $('#naming_sports_pattern').css('background-color', '#FFFFFF');
-                }
-            });
+        $.get(srRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, sports: 'True'}, function (data) {
+            if (data == "invalid") {
+                $('#naming_sports_pattern').qtip('option', {
+                    'content.text': 'This pattern is invalid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_sports_pattern').qtip('toggle', true);
+                $('#naming_sports_pattern').css('background-color', '#FFDDDD');
+            } else if (data == "seasonfolders") {
+                $('#naming_sports_pattern').qtip('option', {
+                    'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_sports_pattern').qtip('toggle', true);
+                $('#naming_sports_pattern').css('background-color', '#FFFFDD');
+            } else {
+                $('#naming_sports_pattern').qtip('option', {
+                    'content.text': 'This pattern is valid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-green'
+                });
+                $('#naming_sports_pattern').qtip('toggle', false);
+                $('#naming_sports_pattern').css('background-color', '#FFFFFF');
+            }
+        });
+    }
 
+    function fill_anime_examples() {
+        var pattern = $('#naming_anime_pattern').val();
+        var multi = $('#naming_anime_multi_ep :selected').val();
+        var anime_type = $('input[name="naming_anime"]:checked').val();
+
+        $.get(srRoot + '/config/postProcessing/testNaming', {pattern: pattern, anime_type: anime_type}, function (data) {
+            if (data) {
+                $('#naming_example_anime').text(data + '.ext');
+                $('#naming_example_anime_div').show();
+            } else {
+                $('#naming_example_anime_div').hide();
+            }
+        });
+
+        $.get(srRoot + '/config/postProcessing/testNaming', {pattern: pattern, multi: multi, anime_type: anime_type}, function (data) {
+            if (data) {
+                $('#naming_example_multi_anime').text(data + '.ext');
+                $('#naming_example_multi_anime_div').show();
+            } else {
+                $('#naming_example_multi_anime_div').hide();
+            }
+        });
+
+        $.get(srRoot + '/config/postProcessing/isNamingValid', {pattern: pattern, multi: multi, anime_type: anime_type}, function (data) {
+            if (data == "invalid") {
+                $('#naming_pattern').qtip('option', {
+                    'content.text': 'This pattern is invalid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_pattern').qtip('toggle', true);
+                $('#naming_pattern').css('background-color', '#FFDDDD');
+            } else if (data == "seasonfolders") {
+                $('#naming_pattern').qtip('option', {
+                    'content.text': 'This pattern would be invalid without the folders, using it will force "Flatten" off for all shows.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-red'
+                });
+                $('#naming_pattern').qtip('toggle', true);
+                $('#naming_pattern').css('background-color', '#FFFFDD');
+            } else {
+                $('#naming_pattern').qtip('option', {
+                    'content.text': 'This pattern is valid.',
+                    'style.classes': 'qtip-rounded qtip-shadow qtip-green'
+                });
+                $('#naming_pattern').qtip('toggle', false);
+                $('#naming_pattern').css('background-color', '#FFFFFF');
+            }
+        });
     }
 
     function setup_naming() {
@@ -214,36 +229,55 @@ $(document).ready(function () {
         fill_sports_examples();
     }
 
-    $('#unpack').change(function () {
-    	if(this.checked) {
-        	israr_supported();
+    function setup_anime_naming() {
+        // if it is a custom selection then show the text box
+        if ($('#name_anime_presets :selected').val() == "Custom...") {
+            $('#naming_anime_custom').show();
         } else {
-        	$('#unpack').qtip('toggle', false);
-		}
+            $('#naming_anime_custom').hide();
+            $('#naming_anime_pattern').val($('#name_anime_presets :selected').attr('id'));
+        }
+        fill_anime_examples();
+    }
+
+    $('#unpack').on('change', function(){
+        if(this.checked) {
+            israr_supported();
+        } else {
+            $('#unpack').qtip('toggle', false);
+        }
     });
 
-    $('#name_presets').change(function () {
+    $('#name_presets').on('change', function(){
         setup_naming();
     });
 
-    $('#name_abd_presets').change(function () {
+    $('#name_abd_presets').on('change', function(){
         setup_abd_naming();
     });
 
-    $('#naming_custom_abd').change(function () {
+    $('#naming_custom_abd').on('change', function(){
         setup_abd_naming();
     });
 
-    $('#name_sports_presets').change(function () {
+    $('#name_sports_presets').on('change', function(){
         setup_sports_naming();
     });
 
-    $('#naming_custom_sports').change(function () {
+    $('#naming_custom_sports').on('change', function(){
         setup_sports_naming();
     });
 
-    $('input[name="naming_anime"]').click(function(){
-        setup_naming();
+    $('#name_anime_presets').on('change', function(){
+        setup_anime_naming();
+    });
+
+    $('#naming_custom_anime').on('change', function(){
+        setup_anime_naming();
+    });
+
+    $('input[name="naming_anime"]').on('click', function(){
+        setup_anime_naming();
     });
 
     $('#naming_multi_ep').change(fill_examples);
@@ -251,6 +285,14 @@ $(document).ready(function () {
     $('#naming_pattern').keyup(function () {
         typewatch(function () {
             fill_examples();
+        }, 500);
+    });
+
+    $('#naming_anime_multi_ep').change(fill_anime_examples);
+    $('#naming_anime_pattern').focusout(fill_anime_examples);
+    $('#naming_anime_pattern').keyup(function () {
+        typewatch(function () {
+            fill_anime_examples();
         }, 500);
     });
 
@@ -268,16 +310,26 @@ $(document).ready(function () {
         }, 500);
     });
 
-    $('#show_naming_key').click(function () {
+    $('#naming_anime_pattern').focusout(fill_examples);
+    $('#naming_anime_pattern').keyup(function () {
+        typewatch(function () {
+            fill_anime_examples();
+        }, 500);
+    });
+
+    $('#show_naming_key').on('click', function(){
         $('#naming_key').toggle();
     });
-    $('#show_naming_abd_key').click(function () {
+    $('#show_naming_abd_key').on('click', function(){
         $('#naming_abd_key').toggle();
     });
-    $('#show_naming_sports_key').click(function () {
+    $('#show_naming_sports_key').on('click', function(){
         $('#naming_sports_key').toggle();
     });
-    $('#do_custom').click(function () {
+    $('#show_naming_anime_key').on('click', function(){
+        $('#naming_anime_key').toggle();
+    });
+    $('#do_custom').on('click', function(){
         $('#naming_pattern').val($('#name_presets :selected').attr('id'));
         $('#naming_custom').show();
         $('#naming_pattern').focus();
@@ -285,6 +337,7 @@ $(document).ready(function () {
     setup_naming();
     setup_abd_naming();
     setup_sports_naming();
+    setup_anime_naming();
 
     // -- start of metadata options div toggle code --
     $('#metadataType').on('change keyup', function () {
@@ -307,12 +360,11 @@ $(document).ready(function () {
     $(this).showHideMetadata();
     // -- end of metadata options div toggle code --
 
-    $('.metadata_checkbox').click(function () {
+    $('.metadata_checkbox').on('click', function(){
         $(this).refreshMetadataConfig(false);
     });
 
     $.fn.refreshMetadataConfig = function (first) {
-
         var cur_most = 0;
         var cur_most_provider = '';
 
@@ -334,8 +386,8 @@ $(document).ready(function () {
             config_arr.push(show_metadata ? '1' : '0');
             config_arr.push(episode_metadata ? '1' : '0');
             config_arr.push(fanart ? '1' : '0');
-			config_arr.push(poster ? '1' : '0');
-			config_arr.push(banner ? '1' : '0');
+            config_arr.push(poster ? '1' : '0');
+            config_arr.push(banner ? '1' : '0');
             config_arr.push(episode_thumbnails ? '1' : '0');
             config_arr.push(season_posters ? '1' : '0');
             config_arr.push(season_banners ? '1' : '0');
@@ -365,15 +417,14 @@ $(document).ready(function () {
 
         });
 
-        if (cur_most_provider != '' && first) {
+        if (cur_most_provider !== '' && first) {
             $('#metadataType option[value=' + cur_most_provider + ']').attr('selected', 'selected');
             $(this).showHideMetadata();
         }
-
-    }
+    };
 
     $(this).refreshMetadataConfig(true);
-    $('img[title]').qtip( {
+    $('img[title]').qtip({
         position: {
             viewport: $(window),
             at: 'bottom center',
@@ -387,7 +438,7 @@ $(document).ready(function () {
             classes: 'qtip-shadow qtip-dark'
         }
     });
-    $('i[title]').qtip( {
+    $('i[title]').qtip({
         position: {
             viewport: $(window),
             at: 'top center',
@@ -401,7 +452,7 @@ $(document).ready(function () {
             classes: 'qtip-rounded qtip-shadow ui-tooltip-sb'
         }
     });
-    $('.custom-pattern,#unpack').qtip( {
+    $('.custom-pattern,#unpack').qtip({
         content: 'validating...',
         show: {
             event: false,
@@ -421,5 +472,4 @@ $(document).ready(function () {
             classes: 'qtip-rounded qtip-shadow qtip-red'
         }
     });
-
 });

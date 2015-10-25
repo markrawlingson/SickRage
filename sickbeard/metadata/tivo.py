@@ -24,10 +24,10 @@ import os
 
 import sickbeard
 
-from sickbeard import logger, exceptions, helpers
+from sickbeard import logger, helpers
 from sickbeard.metadata import generic
-from sickbeard import encodingKludge as ek
-from sickbeard.exceptions import ex
+from sickrage.helper.encoding import ek
+from sickrage.helper.exceptions import ex, ShowNotFoundException
 
 
 class TIVOMetadata(generic.GenericMetadata):
@@ -135,10 +135,10 @@ class TIVOMetadata(generic.GenericMetadata):
 
         ep_obj: a TVEpisode object to get the path for
         """
-        if ek.ek(os.path.isfile, ep_obj.location):
-            metadata_file_name = ek.ek(os.path.basename, ep_obj.location) + "." + self._ep_nfo_extension
-            metadata_dir_name = ek.ek(os.path.join, ek.ek(os.path.dirname, ep_obj.location), '.meta')
-            metadata_file_path = ek.ek(os.path.join, metadata_dir_name, metadata_file_name)
+        if ek(os.path.isfile, ep_obj.location):
+            metadata_file_name = ek(os.path.basename, ep_obj.location) + "." + self._ep_nfo_extension
+            metadata_dir_name = ek(os.path.join, ek(os.path.dirname, ep_obj.location), '.meta')
+            metadata_file_path = ek(os.path.join, metadata_dir_name, metadata_file_name)
         else:
             logger.log(u"Episode location doesn't exist: " + str(ep_obj.location), logger.DEBUG)
             return ''
@@ -173,7 +173,7 @@ class TIVOMetadata(generic.GenericMetadata):
 
             lINDEXER_API_PARMS['actors'] = True
 
-            if indexer_lang and not indexer_lang == 'en':
+            if indexer_lang and not indexer_lang == sickbeard.INDEXER_DEFAULT_LANGUAGE:
                 lINDEXER_API_PARMS['language'] = indexer_lang
 
             if ep_obj.show.dvdorder != 0:
@@ -182,7 +182,7 @@ class TIVOMetadata(generic.GenericMetadata):
             t = sickbeard.indexerApi(ep_obj.show.indexer).indexer(**lINDEXER_API_PARMS)
             myShow = t[ep_obj.show.indexerid]
         except sickbeard.indexer_shownotfound, e:
-            raise exceptions.ShowNotFoundException(str(e))
+            raise ShowNotFoundException(str(e))
         except sickbeard.indexer_error, e:
             logger.log(u"Unable to connect to " + sickbeard.indexerApi(
                 ep_obj.show.indexer).name + " while creating meta files - skipping - " + str(e), logger.ERROR)
@@ -198,13 +198,13 @@ class TIVOMetadata(generic.GenericMetadata):
                     ep_obj.show.indexer).name + "... has it been removed? Should I delete from db?")
                 return None
 
-            if getattr(myEp, 'firstaired', None) is None and ep_obj.season == 0:
+            if ep_obj.season == 0 and not getattr(myEp, 'firstaired', None):
                 myEp["firstaired"] = str(datetime.date.fromordinal(1))
 
-            if getattr(myEp, 'episodename', None) is None or getattr(myEp, 'firstaired', None) is None:
+            if not (getattr(myEp, 'episodename', None) and getattr(myEp, 'firstaired', None)):
                 return None
 
-            if getattr(myShow, 'seriesname', None) is not None:
+            if getattr(myShow, 'seriesname', None):
                 data += ("title : " + myShow["seriesname"] + "\n")
                 data += ("seriesTitle : " + myShow["seriesname"] + "\n")
 
@@ -240,11 +240,11 @@ class TIVOMetadata(generic.GenericMetadata):
 
             # Usually starts with "SH" and followed by 6-8 digits.
             # Tivo uses zap2it for thier data, so the series id is the zap2it_id.
-            if getattr(myShow, 'zap2it_id', None) is not None:
+            if getattr(myShow, 'zap2it_id', None):
                 data += ("seriesId : " + myShow["zap2it_id"] + "\n")
 
             # This is the call sign of the channel the episode was recorded from.
-            if getattr(myShow, 'network', None) is not None:
+            if getattr(myShow, 'network', None):
                 data += ("callsign : " + myShow["network"] + "\n")
 
             # This must be entered as yyyy-mm-ddThh:mm:ssZ (the t is capitalized and never changes, the Z is also
@@ -254,13 +254,13 @@ class TIVOMetadata(generic.GenericMetadata):
                 data += ("originalAirDate : " + str(curEpToWrite.airdate) + "T00:00:00Z\n")
 
             # This shows up at the beginning of the description on the Program screen and on the Details screen.
-            if getattr(myShow, 'actors', None) is not None:
-                for actor in myShow["actors"].split('|'):
-                    if actor:
-                        data += ("vActor : " + actor + "\n")
+            if getattr(myShow, '_actors', None):
+                for actor in myShow["_actors"]:
+                    if 'name' in actor and actor['name'].strip():
+                        data += ("vActor : " + actor['name'].strip() + "\n")
 
             # This is shown on both the Program screen and the Details screen.
-            if getattr(myEp, 'rating', None) is not None:
+            if getattr(myEp, 'rating', None):
                 try:
                     rating = float(myEp['rating'])
                 except ValueError:
@@ -272,7 +272,7 @@ class TIVOMetadata(generic.GenericMetadata):
 
             # This is shown on both the Program screen and the Details screen.
             # It uses the standard TV rating system of: TV-Y7, TV-Y, TV-G, TV-PG, TV-14, TV-MA and TV-NR.
-            if getattr(myShow, 'contentrating', None) is not None:
+            if getattr(myShow, 'contentrating', None):
                 data += ("tvRating : " + str(myShow["contentrating"]) + "\n")
 
             # This field can be repeated as many times as necessary or omitted completely.
@@ -311,17 +311,17 @@ class TIVOMetadata(generic.GenericMetadata):
             return False
 
         nfo_file_path = self.get_episode_file_path(ep_obj)
-        nfo_file_dir = ek.ek(os.path.dirname, nfo_file_path)
+        nfo_file_dir = ek(os.path.dirname, nfo_file_path)
 
         try:
-            if not ek.ek(os.path.isdir, nfo_file_dir):
+            if not ek(os.path.isdir, nfo_file_dir):
                 logger.log(u"Metadata dir didn't exist, creating it at " + nfo_file_dir, logger.DEBUG)
-                ek.ek(os.makedirs, nfo_file_dir)
+                ek(os.makedirs, nfo_file_dir)
                 helpers.chmodAsParent(nfo_file_dir)
 
             logger.log(u"Writing episode nfo file to " + nfo_file_path, logger.DEBUG)
 
-            with ek.ek(open, nfo_file_path, 'w') as nfo_file:
+            with ek(open, nfo_file_path, 'w') as nfo_file:
                 # Calling encode directly, b/c often descriptions have wonky characters.
                 nfo_file.write(data.encode("utf-8"))
 

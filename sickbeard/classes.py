@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv/
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -16,14 +17,16 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 import re
+import sys
 
 import sickbeard
 
 import urllib
 import datetime
-from lib.dateutil import parser
+from dateutil import parser
 
 from common import USER_AGENT, Quality
+from sickrage.helper.common import dateFormat, dateTimeFormat
 
 
 class SickBeardURLopener(urllib.FancyURLopener):
@@ -34,7 +37,7 @@ class AuthURLOpener(SickBeardURLopener):
     """
     URLOpener class that supports http auth without needing interactive password entry.
     If the provided username/password don't work it simply fails.
-    
+
     user: username to use for HTTP auth
     pw: password to use for HTTP auth
     """
@@ -58,11 +61,11 @@ class AuthURLOpener(SickBeardURLopener):
         # if this is the first try then provide a username/password
         if self.numTries == 0:
             self.numTries = 1
-            return (self.username, self.password)
+            return self.username, self.password
 
         # if we've tried before then return blank which cancels the request
         else:
-            return ('', '')
+            return '', ''
 
     # this is pretty much just a hack for convenience
     def openit(self, url):
@@ -77,6 +80,9 @@ class SearchResult:
 
     def __init__(self, episodes):
         self.provider = -1
+
+        # release show object
+        self.show = None
 
         # URL to the NZB/torrent file
         self.url = ""
@@ -96,9 +102,21 @@ class SearchResult:
         # size of the release (-1 = n/a)
         self.size = -1
 
+        # release group
+        self.release_group = ""
+
+        # version
+        self.version = -1
+
+        # hash
+        self.hash = None
+
+        # content
+        self.content = None
+
     def __str__(self):
 
-        if self.provider == None:
+        if self.provider is None:
             return "Invalid provider, unable to print self"
 
         myString = self.provider.name + " @ " + self.url + "\n"
@@ -110,6 +128,7 @@ class SearchResult:
         myString += "Quality: " + Quality.qualityStrings[self.quality] + "\n"
         myString += "Name: " + self.name + "\n"
         myString += "Size: " + str(self.size) + "\n"
+        myString += "Release Group: " + str(self.release_group) + "\n"
 
         return myString
 
@@ -166,25 +185,26 @@ class AllShowsListUI:
                         seriesnames.append(curShow['seriesname'])
                     if 'aliasnames' in curShow:
                         seriesnames.extend(curShow['aliasnames'].split('|'))
-                        
+
                     for name in seriesnames:
                         if searchterm.lower() in name.lower():
                             if 'firstaired' not in curShow:
                                 curShow['firstaired'] = str(datetime.date.fromordinal(1))
-                                curShow['firstaired'] = re.sub("([-]0{2}){1,}", "", curShow['firstaired'])
+                                curShow['firstaired'] = re.sub("([-]0{2})+", "", curShow['firstaired'])
                                 fixDate = parser.parse(curShow['firstaired'], fuzzy=True).date()
-                                curShow['firstaired'] = fixDate.strftime("%Y-%m-%d")
+                                curShow['firstaired'] = fixDate.strftime(dateFormat)
 
                             if curShow not in searchResults:
                                 searchResults += [curShow]
 
         return searchResults
 
+
 class ShowListUI:
     """
     This class is for tvdb-api. Instead of prompting with a UI to pick the
     desired result out of a list of shows it tries to be smart about it
-    based on what shows are in SB. 
+    based on what shows are in SickRage.
     """
 
     def __init__(self, config, log=None):
@@ -192,26 +212,29 @@ class ShowListUI:
         self.log = log
 
     def selectSeries(self, allSeries):
-        if sickbeard.showList:
-            idList = [x.indexerid for x in sickbeard.showList]
-
+        try:
             # try to pick a show that's in my show list
             for curShow in allSeries:
-                if int(curShow['id']) in idList:
+                if filter(lambda x: int(x.indexerid) == int(curShow['id']), sickbeard.showList):
                     return curShow
+        except:
+            pass
 
-        # if nothing matches then return everything
+        # if nothing matches then return first result
         return allSeries[0]
 
 
 class Proper:
-    def __init__(self, name, url, date):
+    def __init__(self, name, url, date, show):
         self.name = name
         self.url = url
         self.date = date
         self.provider = None
         self.quality = Quality.UNKNOWN
+        self.release_group = None
+        self.version = -1
 
+        self.show = show
         self.indexer = None
         self.indexerid = -1
         self.season = -1
@@ -224,7 +247,7 @@ class Proper:
             self.indexerid) + " from " + str(sickbeard.indexerApi(self.indexer).name)
 
 
-class ErrorViewer():
+class ErrorViewer:
     """
     Keeps a static list of UIErrors to be displayed on the UI and allows
     the list to be cleared.
@@ -243,12 +266,41 @@ class ErrorViewer():
     def clear():
         ErrorViewer.errors = []
 
+    @staticmethod
+    def get():
+        return ErrorViewer.errors
 
-class UIError():
+
+class WarningViewer:
+    """
+    Keeps a static list of (warning) UIErrors to be displayed on the UI and allows
+    the list to be cleared.
+    """
+
+    errors = []
+
+    def __init__(self):
+        WarningViewer.errors = []
+
+    @staticmethod
+    def add(error):
+        WarningViewer.errors.append(error)
+
+    @staticmethod
+    def clear():
+        WarningViewer.errors = []
+
+    @staticmethod
+    def get():
+        return WarningViewer.errors
+
+
+class UIError:
     """
     Represents an error to be displayed in the web UI.
     """
 
     def __init__(self, message):
+        self.title = sys.exc_info()[-2] or message
         self.message = message
-        self.time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.time = datetime.datetime.now().strftime(dateTimeFormat)

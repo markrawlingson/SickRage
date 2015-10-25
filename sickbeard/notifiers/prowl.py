@@ -16,6 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
+import socket
 from httplib import HTTPSConnection, HTTPException
 from urllib import urlencode
 
@@ -51,6 +52,13 @@ class ProwlNotifier:
         if sickbeard.PROWL_NOTIFY_ONSUBTITLEDOWNLOAD:
             self._sendProwl(prowl_api=None, prowl_priority=None,
                             event=common.notifyStrings[common.NOTIFY_SUBTITLE_DOWNLOAD], message=ep_name + ": " + lang)
+                            
+    def notify_git_update(self, new_version = "??"):
+        if sickbeard.USE_PROWL:
+            update_text=common.notifyStrings[common.NOTIFY_GIT_UPDATE_TEXT]
+            title=common.notifyStrings[common.NOTIFY_GIT_UPDATE]
+            self._sendProwl(prowl_api=None, prowl_priority=None,
+                            event=title, message=update_text + new_version)
 
     def _sendProwl(self, prowl_api=None, prowl_priority=None, event=None, message=None, force=False):
 
@@ -80,14 +88,14 @@ class ProwlNotifier:
                                  "/publicapi/add",
                                  headers={'Content-type': "application/x-www-form-urlencoded"},
                                  body=urlencode(data))
-        except (SSLError, HTTPException):
+        except (SSLError, HTTPException, socket.error):
             logger.log(u"Prowl notification failed.", logger.ERROR)
             return False
         response = http_handler.getresponse()
         request_status = response.status
 
         if request_status == 200:
-            logger.log(u"Prowl notifications sent.", logger.MESSAGE)
+            logger.log(u"Prowl notifications sent.", logger.INFO)
             return True
         elif request_status == 401:
             logger.log(u"Prowl auth failed: %s" % response.reason, logger.ERROR)

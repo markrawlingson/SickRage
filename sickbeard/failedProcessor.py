@@ -1,5 +1,6 @@
 # Author: Tyler Fenby <tylerfenby@gmail.com>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -19,14 +20,10 @@ from __future__ import with_statement
 
 import sickbeard
 from sickbeard import logger
-from sickbeard import exceptions
 from sickbeard import show_name_helpers
-from sickbeard import helpers
 from sickbeard import search_queue
-from sickbeard import failed_history
-from sickbeard import scene_exceptions
-
-from sickbeard.name_parser.parser import NameParser, InvalidNameException
+from sickbeard.name_parser.parser import NameParser, InvalidNameException, InvalidShowException
+from sickrage.helper.exceptions import FailedPostProcessingFailedException
 
 
 class FailedProcessor(object):
@@ -34,31 +31,36 @@ class FailedProcessor(object):
 
     def __init__(self, dirName, nzbName):
         """
-        dirName: Full path to the folder of the failed download
-        nzbName: Full name of the nzb file that failed
+        :param dirName: Full path to the folder of the failed download
+        :param nzbName: Full name of the nzb file that failed
         """
         self.dir_name = dirName
         self.nzb_name = nzbName
 
-        self._show_obj = None
-
         self.log = ""
 
     def process(self):
+        """
+        Do the actual work
+
+        :return: True
+        """
         self._log(u"Failed download detected: (" + str(self.nzb_name) + ", " + str(self.dir_name) + ")")
 
         releaseName = show_name_helpers.determineReleaseName(self.dir_name, self.nzb_name)
         if releaseName is None:
             self._log(u"Warning: unable to find a valid release name.", logger.WARNING)
-            raise exceptions.FailedProcessingFailed()
-
+            raise FailedPostProcessingFailedException()
 
         try:
-            parser = NameParser(False, convert=True)
+            parser = NameParser(False)
             parsed = parser.parse(releaseName)
         except InvalidNameException:
-            self._log(u"Error: release name is invalid: " + releaseName, logger.WARNING)
-            raise exceptions.FailedProcessingFailed()
+            self._log(u"Error: release name is invalid: " + releaseName, logger.DEBUG)
+            raise FailedPostProcessingFailedException()
+        except InvalidShowException:
+            self._log(u"Error: unable to parse release name " + releaseName + " into a valid show", logger.DEBUG)
+            raise FailedPostProcessingFailedException()
 
         logger.log(u"name_parser info: ", logger.DEBUG)
         logger.log(u" - " + str(parsed.series_name), logger.DEBUG)
@@ -67,26 +69,16 @@ class FailedProcessor(object):
         logger.log(u" - " + str(parsed.extra_info), logger.DEBUG)
         logger.log(u" - " + str(parsed.release_group), logger.DEBUG)
         logger.log(u" - " + str(parsed.air_date), logger.DEBUG)
-        logger.log(u" - " + str(parsed.sports_event_date), logger.DEBUG)
-
-        if parsed.show is None:
-            self._log(
-                u"Could not create show object. Either the show hasn't been added to SickRage, or it's still loading (if SB was restarted recently)",
-                logger.WARNING)
-            raise exceptions.FailedProcessingFailed()
-
-        segment = {parsed.season_number:[]}
 
         for episode in parsed.episode_numbers:
-            epObj = parsed.show.getEpisode(parsed.season_number, episode)
-            segment[parsed.season_number].append(epObj)
+            segment = parsed.show.getEpisode(parsed.season_number, episode)
 
-        cur_failed_queue_item = search_queue.FailedQueueItem(parsed.show, segment)
-        sickbeard.searchQueueScheduler.action.add_item(cur_failed_queue_item)
+            cur_failed_queue_item = search_queue.FailedQueueItem(parsed.show, [segment])
+            sickbeard.searchQueueScheduler.action.add_item(cur_failed_queue_item)
 
         return True
 
-    def _log(self, message, level=logger.MESSAGE):
+    def _log(self, message, level=logger.INFO):
         """Log to regular logfile and save for return for PP script log"""
         logger.log(message, level)
         self.log += message + "\n"

@@ -17,7 +17,12 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
+import sys, os.path
+sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '../lib')))
+sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import unittest
+
 import test_lib as test
 
 import sickbeard
@@ -29,29 +34,29 @@ class TVShowTests(test.SickbeardTestDBCase):
         super(TVShowTests, self).setUp()
         sickbeard.showList = []
 
-    def test_init_tvdbid(self):
+    def test_init_indexerid(self):
         show = TVShow(1, 0001, "en")
-        self.assertEqual(show.tvdbid, 0001)
+        self.assertEqual(show.indexerid, 0001)
 
-    def test_change_tvdbid(self):
+    def test_change_indexerid(self):
         show = TVShow(1, 0001, "en")
         show.name = "show name"
-        show.tvrname = "show name"
         show.network = "cbs"
         show.genre = "crime"
         show.runtime = 40
-        show.status = "5"
+        show.status = "Ended"
+        show.default_ep_status = "5"
         show.airs = "monday"
         show.startyear = 1987
 
         show.saveToDB()
         show.loadFromDB(skipNFO=True)
 
-        show.tvdbid = 0002
+        show.indexerid = 0002
         show.saveToDB()
         show.loadFromDB(skipNFO=True)
 
-        self.assertEqual(show.tvdbid, 0002)
+        self.assertEqual(show.indexerid, 0002)
 
     def test_set_name(self):
         show = TVShow(1, 0001, "en")
@@ -85,11 +90,11 @@ class TVTests(test.SickbeardTestDBCase):
     def test_getEpisode(self):
         show = TVShow(1, 0001, "en")
         show.name = "show name"
-        show.tvrname = "show name"
         show.network = "cbs"
         show.genre = "crime"
         show.runtime = 40
-        show.status = "5"
+        show.status = "Ended"
+        show.default_ep_status = "5"
         show.airs = "monday"
         show.startyear = 1987
         show.saveToDB()

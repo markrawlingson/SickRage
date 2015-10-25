@@ -1,11 +1,12 @@
 # !/usr/bin/env python2
-#encoding:utf-8
-#author:dbr/Ben
+# encoding:utf-8
+# author:dbr/Ben
 #project:tvdb_api
 #repository:http://github.com/dbr/tvdb_api
 #license:unlicense (http://unlicense.org/)
 
 from functools import wraps
+import traceback
 
 __author__ = "dbr/Ben"
 __version__ = "1.9"
@@ -21,7 +22,7 @@ import logging
 import zipfile
 import datetime as dt
 import requests
-import cachecontrol
+
 import xmltodict
 
 try:
@@ -34,11 +35,11 @@ try:
 except ImportError:
     gzip = None
 
-from lib.dateutil.parser import parse
-from cachecontrol import caches
+from dateutil.parser import parse
+from cachecontrol import CacheControl, caches
 
 from tvdb_ui import BaseUI, ConsoleUI
-from tvdb_exceptions import (tvdb_error, tvdb_userabort, tvdb_shownotfound,
+from tvdb_exceptions import (tvdb_error, tvdb_userabort, tvdb_shownotfound, tvdb_showincomplete,
                              tvdb_seasonnotfound, tvdb_episodenotfound, tvdb_attributenotfound)
 
 
@@ -177,9 +178,9 @@ class Show(dict):
         Search terms are converted to lower case (unicode) strings.
 
         # Examples
-        
+
         These examples assume t is an instance of Tvdb():
-        
+
         >>> t = Tvdb()
         >>>
 
@@ -295,7 +296,7 @@ class Episode(dict):
         """Search episode data for term, if it matches, return the Episode (self).
         The key parameter can be used to limit the search to a specific element,
         for example, episodename.
-        
+
         This primarily for use use by Show.search and Season.search. See
         Show.search for further information on search
 
@@ -366,7 +367,8 @@ class Tvdb:
                  apikey=None,
                  forceConnect=False,
                  useZip=False,
-                 dvdorder=False):
+                 dvdorder=False,
+                 proxy=None):
 
         """interactive (True/False):
             When True, uses built-in console UI is used to select the correct show.
@@ -420,7 +422,7 @@ class Tvdb:
             By default, Tvdb will only search in the language specified using
             the language option. When this is True, it will search for the
             show in and language
-        
+
         apikey (str/unicode):
             Override the default thetvdb.com API key. By default it will use
             tvdb_api's own key (fine for small scripts), but you can use your
@@ -464,16 +466,20 @@ class Tvdb:
 
         self.config['dvdorder'] = dvdorder
 
+        self.config['proxy'] = proxy
+
         if cache is True:
             self.config['cache_enabled'] = True
-            self.sess = cachecontrol.CacheControl(cache=caches.FileCache(self._getTempDir()))
+            self.config['cache_location'] = self._getTempDir()
         elif cache is False:
             self.config['cache_enabled'] = False
         elif isinstance(cache, basestring):
             self.config['cache_enabled'] = True
-            self.sess = cachecontrol.CacheControl(cache=caches.FileCache(cache))
+            self.config['cache_location'] = cache
         else:
             raise ValueError("Invalid value for Cache %r (type was %s)" % (cache, type(cache)))
+
+        self.config['session'] = requests.Session()
 
         self.config['banners_enabled'] = banners
         self.config['actors_enabled'] = actors
@@ -532,6 +538,11 @@ class Tvdb:
         self.config['url_seriesBanner'] = u"%(base_url)s/api/%(apikey)s/series/%%s/banners.xml" % self.config
         self.config['url_artworkPrefix'] = u"%(base_url)s/banners/%%s" % self.config
 
+        self.config['url_updates_all'] = u"%(base_url)s/api/%(apikey)s/updates_all.zip" % self.config
+        self.config['url_updates_month'] = u"%(base_url)s/api/%(apikey)s/updates_month.zip" % self.config
+        self.config['url_updates_week'] = u"%(base_url)s/api/%(apikey)s/updates_week.zip" % self.config
+        self.config['url_updates_day'] = u"%(base_url)s/api/%(apikey)s/updates_day.zip" % self.config
+
     def _getTempDir(self):
         """Returns the [system temp dir]/tvdb_api-u501 (or
         tvdb_api-myuser)
@@ -554,18 +565,28 @@ class Tvdb:
 
             # get response from TVDB
             if self.config['cache_enabled']:
-                resp = self.sess.get(url, cache_auto=True, params=params)
+
+                session = CacheControl(sess=self.config['session'], cache=caches.FileCache(self.config['cache_location'], use_dir_lock=True), cache_etags=False)
+                if self.config['proxy']:
+                    log().debug("Using proxy for URL: %s" % url)
+                    session.proxies = {
+                        "http": self.config['proxy'],
+                        "https": self.config['proxy'],
+                    }
+
+                resp = session.get(url.strip(), params=params)
             else:
-                resp = requests.get(url, params=params)
+                resp = requests.get(url.strip(), params=params)
 
-        except requests.HTTPError, e:
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError, e:
             raise tvdb_error("HTTP error " + str(e.errno) + " while loading URL " + str(url))
-
-        except requests.ConnectionError, e:
+        except requests.exceptions.ConnectionError, e:
             raise tvdb_error("Connection error " + str(e.message) + " while loading URL " + str(url))
-
-        except requests.Timeout, e:
+        except requests.exceptions.Timeout, e:
             raise tvdb_error("Connection timed out " + str(e.message) + " while loading URL " + str(url))
+        except Exception as e:
+            raise tvdb_error("Unknown exception while loading URL " + url + ": " + repr(e))
 
         def process(path, key, value):
             key = key.lower()
@@ -582,51 +603,36 @@ class Tvdb:
                         value = parse(value, fuzzy=True).date()
                         value = value.strftime("%Y-%m-%d")
 
-                    #if key == 'airs_time':
-                    #    value = parse(value).time()
-                    #    value = value.strftime("%I:%M %p")
+                        #if key == 'airs_time':
+                        #    value = parse(value).time()
+                        #    value = value.strftime("%I:%M %p")
                 except:
                     pass
 
-            return (key, value)
+            return key, value
 
-        if resp.ok:
-            if 'application/zip' in resp.headers.get("Content-Type", ''):
-                try:
-                    # TODO: The zip contains actors.xml and banners.xml, which are currently ignored [GH-20]
-                    log().debug("We recived a zip file unpacking now ...")
-                    zipdata = StringIO.StringIO()
-                    zipdata.write(resp.content)
-                    myzipfile = zipfile.ZipFile(zipdata)
-                    return xmltodict.parse(myzipfile.read('%s.xml' % language), postprocessor=process)
-                except zipfile.BadZipfile:
-                    raise tvdb_error("Bad zip file received from thetvdb.com, could not read it")
-            else:
-                try:
-                    return xmltodict.parse(resp.content.strip().encode('utf-8'), postprocessor=process)
-                except:
-                    return xmltodict.parse(resp.content.strip(), postprocessor=process)
-
+        if 'application/zip' in resp.headers.get("Content-Type", ''):
+            try:
+                log().debug("We recived a zip file unpacking now ...")
+                zipdata = StringIO.StringIO()
+                zipdata.write(resp.content)
+                myzipfile = zipfile.ZipFile(zipdata)
+                return xmltodict.parse(myzipfile.read('%s.xml' % language), postprocessor=process)
+            except zipfile.BadZipfile:
+                raise tvdb_error("Bad zip file received from thetvdb.com, could not read it")
+        else:
+            try:
+                return xmltodict.parse(resp.content.decode('utf-8'), postprocessor=process)
+            except:
+                return dict([(u'data', None)])
 
     def _getetsrc(self, url, params=None, language=None):
         """Loads a URL using caching, returns an ElementTree of the source
         """
         try:
-            src = self._loadUrl(url, params=params, language=language)
-            src = [src[item] for item in src][0]
-        except:
-            errormsg = "There was an error with the XML retrieved from thetvdb.com:"
-
-            if self.config['cache_enabled']:
-                errormsg += "\nFirst try emptying the cache folder at..\n%s" % (
-                    self.config['cache_location']
-                )
-
-            errormsg += "\nIf this does not resolve the issue, please try again later. If the error persists, report a bug on"
-            errormsg += "\nhttp://dbr.lighthouseapp.com/projects/13342-tvdb_api/overview\n"
-            raise tvdb_error(errormsg)
-
-        return src
+            return self._loadUrl(url, params=params, language=language).values()[0]
+        except Exception, e:
+            raise tvdb_error(e)
 
     def _setItem(self, sid, seas, ep, attrib, value):
         """Creates a new episode, creating Show(), Season() and
@@ -665,7 +671,8 @@ class Tvdb:
         - Replaces &amp; with &
         - Trailing whitespace
         """
-        data = data.replace(u"&amp;", u"&")
+
+        data = unicode(data).replace(u"&amp;", u"&")
         data = data.strip()
         return data
 
@@ -676,9 +683,12 @@ class Tvdb:
         series = series.encode("utf-8")
         log().debug("Searching for show %s" % series)
         self.config['params_getSeries']['seriesname'] = series
-        seriesEt = self._getetsrc(self.config['url_getSeries'], self.config['params_getSeries'])
 
-        return [seriesEt[item] for item in seriesEt][0]
+        results = self._getetsrc(self.config['url_getSeries'], self.config['params_getSeries'])
+        if not results:
+            return
+
+        return results.values()[0]
 
     def _getSeries(self, series):
         """This searches TheTVDB.com for the series name,
@@ -687,16 +697,17 @@ class Tvdb:
         BaseUI is used to select the first result.
         """
         allSeries = self.search(series)
+        if not allSeries:
+            log().debug('Series result returned zero')
+            raise tvdb_shownotfound("Show search returned zero results (cannot find show on TVDB)")
+
         if not isinstance(allSeries, list):
             allSeries = [allSeries]
 
-        if len(allSeries) == 0:
-            log().debug('Series result returned zero')
-            raise tvdb_shownotfound("Show-name search returned zero results (cannot find show on TVDB)")
-
         if self.config['custom_ui'] is not None:
             log().debug("Using custom UI %s" % (repr(self.config['custom_ui'])))
-            ui = self.config['custom_ui'](config=self.config)
+            CustomUI = self.config['custom_ui']
+            ui = CustomUI(config=self.config)
         else:
             if not self.config['interactive']:
                 log().debug('Auto-selecting first search result using BaseUI')
@@ -727,8 +738,13 @@ class Tvdb:
         """
         log().debug('Getting season banners for %s' % (sid))
         bannersEt = self._getetsrc(self.config['url_seriesBanner'] % (sid))
+
+        if not bannersEt:
+            log().debug('Banners result returned zero')
+            return
+
         banners = {}
-        for cur_banner in bannersEt['banner'] if bannersEt else []:
+        for cur_banner in bannersEt['banner'] if isinstance(bannersEt['banner'], list) else [bannersEt['banner']]:
             bid = cur_banner['id']
             btype = cur_banner['bannertype']
             btype2 = cur_banner['bannertype2']
@@ -784,21 +800,28 @@ class Tvdb:
         log().debug("Getting actors for %s" % (sid))
         actorsEt = self._getetsrc(self.config['url_actorsInfo'] % (sid))
 
+        if not actorsEt:
+            log().debug('Actors result returned zero')
+            return
+
         cur_actors = Actors()
-        for curActorItem in actorsEt["actor"] if actorsEt else []:
+        for cur_actor in actorsEt['actor'] if isinstance(actorsEt['actor'], list) else [actorsEt['actor']]:
             curActor = Actor()
-            for k, v in curActorItem.items():
+            for k, v in cur_actor.items():
+                if k is None or v is None:
+                    continue
+
                 k = k.lower()
-                if v is not None:
-                    if k == "image":
-                        v = self.config['url_artworkPrefix'] % (v)
-                    else:
-                        v = self._cleanData(v)
+                if k == "image":
+                    v = self.config['url_artworkPrefix'] % (v)
+                else:
+                    v = self._cleanData(v)
+
                 curActor[k] = v
             cur_actors.append(curActor)
         self._setShowData(sid, '_actors', cur_actors)
 
-    def _getShowData(self, sid, language, seriesSearch=False):
+    def _getShowData(self, sid, language, getEpInfo=False):
         """Takes a series ID, gets the epInfo URL and parses the TVDB
         XML file into the shows dict in layout:
         shows[series_id][season_number][episode_number]
@@ -824,10 +847,11 @@ class Tvdb:
             self.config['url_seriesInfo'] % (sid, getShowInLanguage)
         )
 
-        # check and make sure we have data to process and that it contains a series name
-        if seriesInfoEt is None or 'seriesname' not in seriesInfoEt['series']:
-            return False
+        if not seriesInfoEt:
+            log().debug('Series result returned zero')
+            raise tvdb_error("Series result returned zero")
 
+        # get series data
         for k, v in seriesInfoEt['series'].items():
             if v is not None:
                 if k in ['banner', 'fanart', 'poster']:
@@ -837,62 +861,66 @@ class Tvdb:
 
             self._setShowData(sid, k, v)
 
-        if seriesSearch:
-            return True
+        # get episode data
+        if getEpInfo:
+            # Parse banners
+            if self.config['banners_enabled']:
+                self._parseBanners(sid)
 
-        # Parse banners
-        if self.config['banners_enabled']:
-            self._parseBanners(sid)
+            # Parse actors
+            if self.config['actors_enabled']:
+                self._parseActors(sid)
 
-        # Parse actors
-        if self.config['actors_enabled']:
-            self._parseActors(sid)
-
-        # Parse episode data
-        log().debug('Getting all episodes of %s' % (sid))
-
-        if self.config['useZip']:
-            url = self.config['url_epInfo_zip'] % (sid, language)
-        else:
-            url = self.config['url_epInfo'] % (sid, language)
-
-        epsEt = self._getetsrc(url, language=language)
-
-        episodes =  epsEt["episode"]
-        if not isinstance(episodes, list):
-            episodes = [episodes]
-
-        for cur_ep in episodes:
-            if self.config['dvdorder']:
-                log().debug('Using DVD ordering.')
-                use_dvd = cur_ep['dvd_season'] != None and cur_ep['dvd_episodenumber'] != None
+            # Parse episode data
+            log().debug('Getting all episodes of %s' % (sid))
+            if self.config['useZip']:
+                url = self.config['url_epInfo_zip'] % (sid, language)
             else:
-                use_dvd = False
+                url = self.config['url_epInfo'] % (sid, language)
+            epsEt = self._getetsrc(url, language=language)
 
-            if use_dvd:
-                seasnum, epno = cur_ep['dvd_season'], cur_ep['dvd_episodenumber']
-            else:
-                seasnum, epno = cur_ep['seasonnumber'], cur_ep['episodenumber']
+            if not epsEt:
+                log().debug('Series results incomplete')
+                raise tvdb_showincomplete("Show search returned incomplete results (cannot find complete show on TVDB)")
 
-            if seasnum is None or epno is None:
-                log().warning("An episode has incomplete season/episode number (season: %r, episode: %r)" % (
-                    seasnum, epno))
-                continue  # Skip to next episode
+            if 'episode' not in epsEt:
+                return False
 
-            # float() is because https://github.com/dbr/tvnamer/issues/95 - should probably be fixed in TVDB data
-            seas_no = int(float(seasnum))
-            ep_no = int(float(epno))
+            episodes = epsEt["episode"]
+            if not isinstance(episodes, list):
+                episodes = [episodes]
 
-            for k, v in cur_ep.items():
-                k = k.lower()
+            for cur_ep in episodes:
+                if self.config['dvdorder']:
+                    log().debug('Using DVD ordering.')
+                    use_dvd = cur_ep['dvd_season'] != None and cur_ep['dvd_episodenumber'] != None
+                else:
+                    use_dvd = False
 
-                if v is not None:
-                    if k == 'filename':
-                        v = self.config['url_artworkPrefix'] % (v)
-                    else:
-                        v = self._cleanData(v)
+                if use_dvd:
+                    seasnum, epno = cur_ep['dvd_season'], cur_ep['dvd_episodenumber']
+                else:
+                    seasnum, epno = cur_ep['seasonnumber'], cur_ep['episodenumber']
 
-                self._setItem(sid, seas_no, ep_no, k, v)
+                if seasnum is None or epno is None:
+                    log().warning("An episode has incomplete season/episode number (season: %r, episode: %r)" % (
+                        seasnum, epno))
+                    continue  # Skip to next episode
+
+                # float() is because https://github.com/dbr/tvnamer/issues/95 - should probably be fixed in TVDB data
+                seas_no = int(float(seasnum))
+                ep_no = int(float(epno))
+
+                for k, v in cur_ep.items():
+                    k = k.lower()
+
+                    if v is not None:
+                        if k == 'filename':
+                            v = self.config['url_artworkPrefix'] % (v)
+                        else:
+                            v = self._cleanData(v)
+
+                    self._setItem(sid, seas_no, ep_no, k, v)
 
         return True
 
@@ -910,7 +938,7 @@ class Tvdb:
             if isinstance(selected_series, dict):
                 selected_series = [selected_series]
             sids = list(int(x['id']) for x in selected_series if
-                        self._getShowData(int(x['id']), self.config['language'], seriesSearch=True))
+                        self._getShowData(int(x['id']), self.config['language']))
             self.corrections.update(dict((x['seriesname'], int(x['id'])) for x in selected_series))
             return sids
 
@@ -921,7 +949,7 @@ class Tvdb:
         if isinstance(key, (int, long)):
             # Item is integer, treat as show id
             if key not in self.shows:
-                self._getShowData(key, self.config['language'])
+                self._getShowData(key, self.config['language'], True)
             return self.shows[key]
 
         key = str(key).lower()
@@ -931,13 +959,9 @@ class Tvdb:
             selected_series = [selected_series]
         [[self._setShowData(show['id'], k, v) for k, v in show.items()] for show in selected_series]
         return selected_series
-        #test = self._getSeries(key)
-        #sids = self._nameToSid(key)
-        #return list(self.shows[sid] for sid in sids)
 
     def __repr__(self):
         return str(self.shows)
-
 
 def main():
     """Simple example of using tvdb_api - it just

@@ -60,8 +60,8 @@ class _WorkItem(object):
         try:
             result = self.fn(*self.args, **self.kwargs)
         except BaseException:
-            e = sys.exc_info()[1]
-            self.future.set_exception(e)
+            e, tb = sys.exc_info()[1:]
+            self.future.set_exception_info(e, tb)
         else:
             self.future.set_result(result)
 
@@ -108,16 +108,11 @@ class ThreadPoolExecutor(_base.Executor):
             w = _WorkItem(f, fn, args, kwargs)
 
             self._work_queue.put(w)
-
-            name = None
-            if kwargs.has_key('name'):
-                name = kwargs.pop('name')
-
-            self._adjust_thread_count(name)
+            self._adjust_thread_count()
             return f
     submit.__doc__ = _base.Executor.submit.__doc__
 
-    def _adjust_thread_count(self, name=None):
+    def _adjust_thread_count(self):
         # When the executor gets lost, the weakref callback will wake up
         # the worker threads.
         def weakref_cb(_, q=self._work_queue):
@@ -127,9 +122,7 @@ class ThreadPoolExecutor(_base.Executor):
         if len(self._threads) < self._max_workers:
             t = threading.Thread(target=_worker,
                                  args=(weakref.ref(self, weakref_cb),
-                                       self._work_queue),)
-            if name:
-                t.name = name
+                                       self._work_queue))
             t.daemon = True
             t.start()
             self._threads.add(t)
