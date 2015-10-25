@@ -41,9 +41,9 @@ class NextGenProvider(generic.TorrentProvider):
 
         self.cache = NextGenCache(self)
 
-        self.urls = {'base_url': 'https://nxtgn.info/',
-                     'search': 'https://nxtgn.info/browse.php?search=%s&cat=0&incldead=0&modes=%s',
-                     'login_page': 'https://nxtgn.info/login.php'}
+        self.urls = {'base_url': 'https://nxtgn.biz/',
+                     'search': 'https://nxtgn.biz/browse.php?search=%s&cat=0&incldead=0&modes=%s',
+                     'login_page': 'https://nxtgn.biz/login.php'}
 
         self.url = self.urls['base_url']
 
@@ -92,6 +92,9 @@ class NextGenProvider(generic.TorrentProvider):
         try:
             login_params = self.getLoginParams()
             data = self.getURL(self.urls['login_page'])
+            if not data:
+                return False
+
             with BS4Parser(data) as bs:
                 csrfraw = bs.find('form', attrs={'id': 'login'})['action']
                 output = self.getURL(self.urls['base_url'] + csrfraw, post_data=login_params)
