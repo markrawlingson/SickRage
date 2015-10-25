@@ -17,16 +17,19 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
+import sys, os.path
+sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '../lib')))
+sys.path.insert(1, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import random
 import unittest
 
 import test_lib as test
 
-import sys, os.path
-
 from sickbeard.postProcessor import PostProcessor
 import sickbeard
 from sickbeard.tv import TVEpisode, TVShow
+from sickbeard.name_cache import addNameToCache
 
 
 class PPInitTests(unittest.TestCase):
@@ -39,46 +42,6 @@ class PPInitTests(unittest.TestCase):
 
     def test_init_folder_name(self):
         self.assertEqual(self.pp.folder_name, test.SHOWNAME)
-
-
-class PPPrivateTests(test.SickbeardTestDBCase):
-
-
-    def setUp(self):
-        super(PPPrivateTests, self).setUp()
-
-        sickbeard.showList = [TVShow(1,0000), TVShow(1,0001)]
-
-        self.pp = PostProcessor(test.FILEPATH)
-        self.show_obj = TVShow(1,0002)
-
-        self.db = test.db.DBConnection()
-        newValueDict = {"indexerid": 1002,
-                        "name": test.SHOWNAME,
-                        "description": "description",
-                        "airdate": 1234,
-                        "hasnfo": 1,
-                        "hastbn": 1,
-                        "status": 404,
-                        "location": test.FILEPATH}
-        controlValueDict = {"showid": 0002,
-                            "season": test.SEASON,
-                            "episode": test.EPISODE}
-
-        # use a custom update/insert method to get the data into the DB
-        self.db.upsert("tv_episodes", newValueDict, controlValueDict)
-
-        self.ep_obj = TVEpisode(self.show_obj, test.SEASON, test.EPISODE, test.FILEPATH)
-        print
-
-    def test__find_ep_destination_folder(self):
-        self.show_obj.location = test.FILEDIR
-        self.ep_obj.show.seasonfolders = 1
-        sickbeard.SEASON_FOLDERS_FORMAT = 'Season %02d'
-        calculatedPath = self.ep_obj.proper_path()
-        expectedPath = os.path.join(test.FILEDIR, "Season 0" + str(test.SEASON))
-        self.assertEqual(calculatedPath, expectedPath)
-
 
 class PPBasicTests(test.SickbeardTestDBCase):
 
@@ -93,6 +56,9 @@ class PPBasicTests(test.SickbeardTestDBCase):
         ep.name = "some ep name"
         ep.saveToDB()
 
+        addNameToCache('show name', 3)
+        sickbeard.PROCESS_METHOD = 'move'
+
         pp = PostProcessor(test.FILEPATH)
         self.assertTrue(pp.process())
 
@@ -103,9 +69,6 @@ if __name__ == '__main__':
     print "=================="
     print "######################################################################"
     suite = unittest.TestLoader().loadTestsFromTestCase(PPInitTests)
-    unittest.TextTestRunner(verbosity=2).run(suite)
-    print "######################################################################"
-    suite = unittest.TestLoader().loadTestsFromTestCase(PPPrivateTests)
     unittest.TextTestRunner(verbosity=2).run(suite)
     print "######################################################################"
     suite = unittest.TestLoader().loadTestsFromTestCase(PPBasicTests)

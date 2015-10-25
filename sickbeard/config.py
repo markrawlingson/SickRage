@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -22,11 +23,15 @@ import re
 import urlparse
 import sickbeard
 
-from sickbeard import encodingKludge as ek
 from sickbeard import helpers
 from sickbeard import logger
 from sickbeard import naming
 from sickbeard import db
+
+# Address poor support for scgi over unix domain sockets
+# this is not nicely handled by python currently
+# http://bugs.python.org/issue23636
+urlparse.uses_netloc.append('scgi')
 
 naming_ep_type = ("%(seasonnumber)dx%(episodenumber)02d",
                   "s%(seasonnumber)02de%(episodenumber)02d",
@@ -50,6 +55,12 @@ naming_sep_type_text = (" - ", "space")
 
 
 def change_HTTPS_CERT(https_cert):
+    """
+    Replace HTTPS Certificate file path
+
+    :param https_cert: path to the new certificate file
+    :return: True on success, False on failure
+    """
     if https_cert == '':
         sickbeard.HTTPS_CERT = ''
         return True
@@ -65,6 +76,12 @@ def change_HTTPS_CERT(https_cert):
 
 
 def change_HTTPS_KEY(https_key):
+    """
+    Replace HTTPS Key file path
+
+    :param https_key: path to the new key file
+    :return: True on success, False on failure
+    """
     if https_key == '':
         sickbeard.HTTPS_KEY = ''
         return True
@@ -80,6 +97,13 @@ def change_HTTPS_KEY(https_key):
 
 
 def change_LOG_DIR(log_dir, web_log):
+    """
+    Change logging directory for application and webserver
+
+    :param log_dir: Path to new logging directory
+    :param web_log: Enable/disable web logging
+    :return: True on success, False on failure
+    """
     log_dir_changed = False
     abs_log_dir = os.path.normpath(os.path.join(sickbeard.DATA_DIR, log_dir))
     web_log_value = checkbox_to_value(web_log)
@@ -89,7 +113,7 @@ def change_LOG_DIR(log_dir, web_log):
             sickbeard.ACTUAL_LOG_DIR = os.path.normpath(log_dir)
             sickbeard.LOG_DIR = abs_log_dir
 
-            logger.sb_log_instance.initLogging()
+            logger.initLogging()
             logger.log(u"Initialized new log file in " + sickbeard.LOG_DIR)
             log_dir_changed = True
 
@@ -103,6 +127,12 @@ def change_LOG_DIR(log_dir, web_log):
 
 
 def change_NZB_DIR(nzb_dir):
+    """
+    Change NZB Folder
+
+    :param nzb_dir: New NZB Folder location
+    :return: True on success, False on failure
+    """
     if nzb_dir == '':
         sickbeard.NZB_DIR = ''
         return True
@@ -118,6 +148,12 @@ def change_NZB_DIR(nzb_dir):
 
 
 def change_TORRENT_DIR(torrent_dir):
+    """
+    Change torrent directory
+
+    :param torrent_dir: New torrent directory
+    :return: True on success, False on failure
+    """
     if torrent_dir == '':
         sickbeard.TORRENT_DIR = ''
         return True
@@ -133,6 +169,12 @@ def change_TORRENT_DIR(torrent_dir):
 
 
 def change_TV_DOWNLOAD_DIR(tv_download_dir):
+    """
+    Change TV_DOWNLOAD directory (used by postprocessor)
+
+    :param tv_download_dir: New tv download directory
+    :return: True on success, False on failure
+    """
     if tv_download_dir == '':
         sickbeard.TV_DOWNLOAD_DIR = ''
         return True
@@ -148,6 +190,12 @@ def change_TV_DOWNLOAD_DIR(tv_download_dir):
 
 
 def change_AUTOPOSTPROCESSER_FREQUENCY(freq):
+    """
+    Change frequency of automatic postprocessing thread
+    TODO: Make all thread frequency changers in config.py return True/False status
+
+    :param freq: New frequency
+    """
     sickbeard.AUTOPOSTPROCESSER_FREQUENCY = to_int(freq, default=sickbeard.DEFAULT_AUTOPOSTPROCESSER_FREQUENCY)
 
     if sickbeard.AUTOPOSTPROCESSER_FREQUENCY < sickbeard.MIN_AUTOPOSTPROCESSER_FREQUENCY:
@@ -156,6 +204,11 @@ def change_AUTOPOSTPROCESSER_FREQUENCY(freq):
     sickbeard.autoPostProcesserScheduler.cycleTime = datetime.timedelta(minutes=sickbeard.AUTOPOSTPROCESSER_FREQUENCY)
 
 def change_DAILYSEARCH_FREQUENCY(freq):
+    """
+    Change frequency of daily search thread
+
+    :param freq: New frequency
+    """
     sickbeard.DAILYSEARCH_FREQUENCY = to_int(freq, default=sickbeard.DEFAULT_DAILYSEARCH_FREQUENCY)
 
     if sickbeard.DAILYSEARCH_FREQUENCY < sickbeard.MIN_DAILYSEARCH_FREQUENCY:
@@ -164,14 +217,25 @@ def change_DAILYSEARCH_FREQUENCY(freq):
     sickbeard.dailySearchScheduler.cycleTime = datetime.timedelta(minutes=sickbeard.DAILYSEARCH_FREQUENCY)
 
 def change_BACKLOG_FREQUENCY(freq):
+    """
+    Change frequency of backlog thread
+
+    :param freq: New frequency
+    """
     sickbeard.BACKLOG_FREQUENCY = to_int(freq, default=sickbeard.DEFAULT_BACKLOG_FREQUENCY)
 
+    sickbeard.MIN_BACKLOG_FREQUENCY = sickbeard.get_backlog_cycle_time()
     if sickbeard.BACKLOG_FREQUENCY < sickbeard.MIN_BACKLOG_FREQUENCY:
         sickbeard.BACKLOG_FREQUENCY = sickbeard.MIN_BACKLOG_FREQUENCY
 
     sickbeard.backlogSearchScheduler.cycleTime = datetime.timedelta(minutes=sickbeard.BACKLOG_FREQUENCY)
 
 def change_UPDATE_FREQUENCY(freq):
+    """
+    Change frequency of daily updater thread
+
+    :param freq: New frequency
+    """
     sickbeard.UPDATE_FREQUENCY = to_int(freq, default=sickbeard.DEFAULT_UPDATE_FREQUENCY)
 
     if sickbeard.UPDATE_FREQUENCY < sickbeard.MIN_UPDATE_FREQUENCY:
@@ -179,7 +243,38 @@ def change_UPDATE_FREQUENCY(freq):
 
     sickbeard.versionCheckScheduler.cycleTime = datetime.timedelta(hours=sickbeard.UPDATE_FREQUENCY)
 
+def change_SHOWUPDATE_HOUR(freq):
+    """
+    Change frequency of show updater thread
+
+    :param freq: New frequency
+    """
+    sickbeard.SHOWUPDATE_HOUR = to_int(freq, default=sickbeard.DEFAULT_SHOWUPDATE_HOUR)
+
+    if sickbeard.SHOWUPDATE_HOUR > 23:
+        sickbeard.SHOWUPDATE_HOUR = 0
+    elif sickbeard.SHOWUPDATE_HOUR < 0:
+        sickbeard.SHOWUPDATE_HOUR = 0
+
+    sickbeard.showUpdateScheduler.start_time = datetime.time(hour=sickbeard.SHOWUPDATE_HOUR)
+
+def change_SUBTITLES_FINDER_FREQUENCY(subtitles_finder_frequency):
+    """
+    Change frequency of subtitle thread
+
+    :param subtitles_finder_frequency: New frequency
+    """
+    if subtitles_finder_frequency == '' or subtitles_finder_frequency is None:
+            subtitles_finder_frequency = 1
+
+    sickbeard.SUBTITLES_FINDER_FREQUENCY = to_int(subtitles_finder_frequency, 1)
+
 def change_VERSION_NOTIFY(version_notify):
+    """
+    Change frequency of versioncheck thread
+
+    :param version_notify: New frequency
+    """
     oldSetting = sickbeard.VERSION_NOTIFY
 
     sickbeard.VERSION_NOTIFY = version_notify
@@ -188,8 +283,108 @@ def change_VERSION_NOTIFY(version_notify):
         sickbeard.NEWEST_VERSION_STRING = None
 
     if oldSetting == False and version_notify == True:
-        sickbeard.versionCheckScheduler.action.run()  # @UndefinedVariable
+        sickbeard.versionCheckScheduler.forceRun()
 
+def change_DOWNLOAD_PROPERS(download_propers):
+    """
+    Enable/Disable proper download thread
+    TODO: Make this return True/False on success/failure
+
+    :param download_propers: New desired state
+    """
+    download_propers = checkbox_to_value(download_propers)
+
+    if sickbeard.DOWNLOAD_PROPERS == download_propers:
+        return
+
+    sickbeard.DOWNLOAD_PROPERS = download_propers
+    if sickbeard.DOWNLOAD_PROPERS:
+        if not sickbeard.properFinderScheduler.enable:
+            logger.log(u"Starting PROPERFINDER thread", logger.INFO)
+            sickbeard.properFinderScheduler.silent = False
+            sickbeard.properFinderScheduler.enable = True
+        else:
+            logger.log(u"Unable to start PROPERFINDER thread. Already running", logger.INFO)
+    else:
+        sickbeard.properFinderScheduler.enable = False
+        sickbeard.traktCheckerScheduler.silent = True
+        logger.log(u"Stopping PROPERFINDER thread", logger.INFO)
+
+def change_USE_TRAKT(use_trakt):
+    """
+    Enable/disable trakt thread
+    TODO: Make this return true/false on success/failure
+
+    :param use_trakt: New desired state
+    """
+    use_trakt = checkbox_to_value(use_trakt)
+
+    if sickbeard.USE_TRAKT == use_trakt:
+        return
+
+    sickbeard.USE_TRAKT = use_trakt
+    if sickbeard.USE_TRAKT:
+        if not sickbeard.traktCheckerScheduler.enable:
+            logger.log(u"Starting TRAKTCHECKER thread", logger.INFO)
+            sickbeard.traktCheckerScheduler.silent = False
+            sickbeard.traktCheckerScheduler.enable = True
+        else:
+            logger.log(u"Unable to start TRAKTCHECKER thread. Already running", logger.INFO)
+    else:
+        sickbeard.traktCheckerScheduler.enable = False
+        sickbeard.traktCheckerScheduler.silent = True
+        logger.log(u"Stopping TRAKTCHECKER thread", logger.INFO)
+
+
+def change_USE_SUBTITLES(use_subtitles):
+    """
+    Enable/Disable subtitle searcher
+    TODO: Make this return true/false on success/failure
+
+    :param use_subtitles: New desired state
+    """
+    use_subtitles = checkbox_to_value(use_subtitles)
+
+    if sickbeard.USE_SUBTITLES == use_subtitles:
+        return
+
+    sickbeard.USE_SUBTITLES = use_subtitles
+    if sickbeard.USE_SUBTITLES:
+        if not sickbeard.subtitlesFinderScheduler.enable:
+            logger.log(u"Starting SUBTITLESFINDER thread", logger.INFO)
+            sickbeard.subtitlesFinderScheduler.silent = False
+            sickbeard.subtitlesFinderScheduler.enable = True
+        else:
+            logger.log(u"Unable to start SUBTITLESFINDER thread. Already running", logger.INFO)
+    else:
+        sickbeard.subtitlesFinderScheduler.enable = False
+        sickbeard.subtitlesFinderScheduler.silent = True
+        logger.log(u"Stopping SUBTITLESFINDER thread", logger.INFO)
+
+def change_PROCESS_AUTOMATICALLY(process_automatically):
+    """
+    Enable/Disable postprocessor thread
+    TODO: Make this return True/False on success/failure
+
+    :param process_automatically: New desired state
+    """
+    process_automatically = checkbox_to_value(process_automatically)
+
+    if sickbeard.PROCESS_AUTOMATICALLY == process_automatically:
+        return
+
+    sickbeard.PROCESS_AUTOMATICALLY = process_automatically
+    if sickbeard.PROCESS_AUTOMATICALLY:
+        if not sickbeard.autoPostProcesserScheduler.enable:
+            logger.log(u"Starting POSTPROCESSER thread", logger.INFO)
+            sickbeard.autoPostProcesserScheduler.silent = False
+            sickbeard.autoPostProcesserScheduler.enable = True
+        else:
+            logger.log(u"Unable to start POSTPROCESSER thread. Already running", logger.INFO)
+    else:
+        logger.log(u"Stopping POSTPROCESSER thread", logger.INFO)
+        sickbeard.autoPostProcesserScheduler.enable = False
+        sickbeard.autoPostProcesserScheduler.silent = True
 
 def CheckSection(CFG, sec):
     """ Check if INI section exists, if not create it """
@@ -206,6 +401,10 @@ def checkbox_to_value(option, value_on=1, value_off=0):
     Turns checkbox option 'on' or 'true' to value_on (1)
     any other value returns value_off (0)
     """
+
+    if type(option) is list:
+        option = option[-1]
+
     if option == 'on' or option == 'true':
         return value_on
 
@@ -245,6 +444,13 @@ def clean_host(host, default_port=None):
 
 
 def clean_hosts(hosts, default_port=None):
+    """
+    Returns list of cleaned hosts by clean_host
+
+    :param hosts: list of hosts
+    :param default_port: default port to use
+    :return: list of cleaned hosts
+    """
     cleaned_hosts = []
 
     for cur_host in [x.strip() for x in hosts.split(",")]:
@@ -277,10 +483,8 @@ def clean_url(url):
 
         scheme, netloc, path, query, fragment = urlparse.urlsplit(url, 'http')
 
-        if not path.endswith('/'):
-            basename, ext = ek.ek(os.path.splitext, ek.ek(os.path.basename, path))  # @UnusedVariable
-            if not ext:
-                path = path + '/'
+        if not path:
+            path = path + '/'
 
         cleaned_url = urlparse.urlunsplit((scheme, netloc, path, query, fragment))
 
@@ -320,9 +524,18 @@ def minimax(val, default, low, high):
 ################################################################################
 # Check_setting_int                                                            #
 ################################################################################
-def check_setting_int(config, cfg_name, item_name, def_val):
+def check_setting_int(config, cfg_name, item_name, def_val, silent=True):
     try:
-        my_val = int(config[cfg_name][item_name])
+        my_val = config[cfg_name][item_name]
+        if str(my_val).lower() == "true":
+            my_val = 1
+        elif str(my_val).lower() == "false":
+            my_val = 0
+
+        my_val = int(my_val)
+
+        if str(my_val) == str(None):
+            raise
     except:
         my_val = def_val
         try:
@@ -330,16 +543,21 @@ def check_setting_int(config, cfg_name, item_name, def_val):
         except:
             config[cfg_name] = {}
             config[cfg_name][item_name] = my_val
-    logger.log(item_name + " -> " + str(my_val), logger.DEBUG)
+
+    if not silent:
+        logger.log(item_name + " -> " + str(my_val), logger.DEBUG)
+
     return my_val
 
 
 ################################################################################
 # Check_setting_float                                                          #
 ################################################################################
-def check_setting_float(config, cfg_name, item_name, def_val):
+def check_setting_float(config, cfg_name, item_name, def_val, silent=True):
     try:
         my_val = float(config[cfg_name][item_name])
+        if str(my_val) == str(None):
+            raise
     except:
         my_val = def_val
         try:
@@ -348,14 +566,16 @@ def check_setting_float(config, cfg_name, item_name, def_val):
             config[cfg_name] = {}
             config[cfg_name][item_name] = my_val
 
-    logger.log(item_name + " -> " + str(my_val), logger.DEBUG)
+    if not silent:
+        logger.log(item_name + " -> " + str(my_val), logger.DEBUG)
+
     return my_val
 
 
 ################################################################################
 # Check_setting_str                                                            #
 ################################################################################
-def check_setting_str(config, cfg_name, item_name, def_val, log=True):
+def check_setting_str(config, cfg_name, item_name, def_val, silent=True, censor_log=False):
     # For passwords you must include the word `password` in the item_name and add `helpers.encrypt(ITEM_NAME, ENCRYPTION_VERSION)` in save_config()
     if bool(item_name.find('password') + 1):
         log = False
@@ -365,6 +585,8 @@ def check_setting_str(config, cfg_name, item_name, def_val, log=True):
 
     try:
         my_val = helpers.decrypt(config[cfg_name][item_name], encryption_version)
+        if str(my_val) == str(None):
+            raise
     except:
         my_val = def_val
         try:
@@ -373,10 +595,11 @@ def check_setting_str(config, cfg_name, item_name, def_val, log=True):
             config[cfg_name] = {}
             config[cfg_name][item_name] = helpers.encrypt(my_val, encryption_version)
 
-    if log:
+    if censor_log or (cfg_name, item_name) in logger.censoredItems.iteritems():
+        logger.censoredItems[cfg_name, item_name] = my_val
+
+    if not silent:
         logger.log(item_name + " -> " + str(my_val), logger.DEBUG)
-    else:
-        logger.log(item_name + " -> ******", logger.DEBUG)
 
     return my_val
 
@@ -396,7 +619,9 @@ class ConfigMigrator():
                                 2: 'Sync backup number with version number',
                                 3: 'Rename omgwtfnzb variables',
                                 4: 'Add newznab catIDs',
-                                5: 'Metadata update'
+                                5: 'Metadata update',
+                                6: 'Convert from XBMC to new KODI variables',
+                                7: 'Use version 2 for password encryption'
         }
 
     def migrate_config(self):
@@ -426,7 +651,7 @@ class ConfigMigrator():
             else:
                 logger.log(u"Proceeding with upgrade")
 
-            # do the                                                                                                migration, expect a method named _migrate_v<num>
+            # do the migration, expect a method named _migrate_v<num>
             logger.log(u"Migrating config up to version " + str(next_version) + migration_name)
             getattr(self, '_migrate_v' + str(next_version))()
             self.config_version = next_version
@@ -467,7 +692,7 @@ class ConfigMigrator():
             if old_season_format:
                 try:
                     new_season_format = old_season_format % 9
-                    new_season_format = new_season_format.replace('09', '%0S')
+                    new_season_format = str(new_season_format).replace('09', '%0S')
                     new_season_format = new_season_format.replace('9', '%S')
 
                     logger.log(
@@ -663,3 +888,23 @@ class ConfigMigrator():
         sickbeard.METADATA_WDTV = _migrate_metadata(metadata_wdtv, 'WDTV', use_banner)
         sickbeard.METADATA_TIVO = _migrate_metadata(metadata_tivo, 'TIVO', use_banner)
         sickbeard.METADATA_MEDE8ER = _migrate_metadata(metadata_mede8er, 'Mede8er', use_banner)
+
+    # Migration v6: Convert from XBMC to KODI variables
+    def _migrate_v6(self):
+        sickbeard.USE_KODI = bool(check_setting_int(self.config_obj, 'XBMC', 'use_xbmc', 0))
+        sickbeard.KODI_ALWAYS_ON = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_always_on', 1))
+        sickbeard.KODI_NOTIFY_ONSNATCH = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_notify_onsnatch', 0))
+        sickbeard.KODI_NOTIFY_ONDOWNLOAD = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_notify_ondownload', 0))
+        sickbeard.KODI_NOTIFY_ONSUBTITLEDOWNLOAD = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_notify_onsubtitledownload', 0))
+        sickbeard.KODI_UPDATE_LIBRARY = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_update_library', 0))
+        sickbeard.KODI_UPDATE_FULL = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_update_full', 0))
+        sickbeard.KODI_UPDATE_ONLYFIRST = bool(check_setting_int(self.config_obj, 'XBMC', 'xbmc_update_onlyfirst', 0))
+        sickbeard.KODI_HOST = check_setting_str(self.config_obj, 'XBMC', 'xbmc_host', '')
+        sickbeard.KODI_USERNAME = check_setting_str(self.config_obj, 'XBMC', 'xbmc_username', '', censor_log=True)
+        sickbeard.KODI_PASSWORD = check_setting_str(self.config_obj, 'XBMC', 'xbmc_password', '', censor_log=True)
+        sickbeard.METADATA_KODI = check_setting_str(self.config_obj, 'General', 'metadata_xbmc', '0|0|0|0|0|0|0|0|0|0')
+        sickbeard.METADATA_KODI_12PLUS = check_setting_str(self.config_obj, 'General', 'metadata_xbmc_12plus', '0|0|0|0|0|0|0|0|0|0')
+
+    # Migration v6: Use version 2 for password encryption
+    def _migrate_v7(self):
+        sickbeard.ENCRYPTION_VERSION = 2

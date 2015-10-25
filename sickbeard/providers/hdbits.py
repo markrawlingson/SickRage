@@ -1,39 +1,31 @@
 # This file is part of SickRage.
-#                                                                                                                                        
+#
 # SickRage is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by                                                                   
-# the Free Software Foundation, either version 3 of the License, or                                                                      
-# (at your option) any later version.                                                                                                    
-#                                                                                                                                        
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
 # SickRage is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of                                                                         
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                                                                          
-#  GNU General Public License for more details.                                                                                          
-#                                                                                                                                        
-# You should have received a copy of the GNU General Public License                                                                      
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-import re
-import time
 import datetime
 import urllib
-import urlparse
-import sys
-import generic
-import sickbeard
 
-from lib import requests
-from lib.requests import exceptions
+from sickbeard.providers import generic
+
 from sickbeard import classes
-from sickbeard import logger, tvcache, exceptions
-from sickbeard import helpers
-from sickbeard import clients
-from sickbeard.common import cpu_presets
-from sickbeard.exceptions import ex, AuthException
+from sickbeard import logger, tvcache
+from sickrage.helper.exceptions import AuthException
+
 try:
     import json
 except ImportError:
-    from lib import simplejson as json
+    import simplejson as json
 
 
 class HDBitsProvider(generic.TorrentProvider):
@@ -43,17 +35,19 @@ class HDBitsProvider(generic.TorrentProvider):
 
         self.supportsBacklog = True
 
-        self.enabled = False
+
         self.username = None
         self.passkey = None
         self.ratio = None
 
         self.cache = HDBitsCache(self)
 
-        self.url = 'http://hdbits.org'
-        self.search_url = 'http://hdbits.org/api/torrents'
-        self.rss_url = 'http://hdbits.org/api/torrents'
-        self.download_url = 'http://hdbits.org/download.php?'
+        self.urls = {'base_url': 'https://hdbits.org',
+                     'search': 'https://hdbits.org/api/torrents',
+                     'rss': 'https://hdbits.org/api/torrents',
+                     'download': 'https://hdbits.org/download.php?'}
+
+        self.url = self.urls['base_url']
 
     def isEnabled(self):
         return self.enabled
@@ -67,20 +61,14 @@ class HDBitsProvider(generic.TorrentProvider):
 
     def _checkAuthFromData(self, parsedJSON):
 
-        if parsedJSON is None:
-            return self._checkAuth()
-
         if 'status' in parsedJSON and 'message' in parsedJSON:
             if parsedJSON.get('status') == 5:
-                logger.log(u"Incorrect authentication credentials for " + self.name + " : " + parsedJSON['message'],
-                           logger.DEBUG)
-                raise AuthException(
-                    "Your authentication credentials for " + self.name + " are incorrect, check your config.")
+                logger.log(u"Invalid username or password. Check your settings", logger.WARNING)
 
         return True
 
     def _get_season_search_strings(self, ep_obj):
-        season_search_string = [self._make_post_data_JSON(show=ep_obj.show, season=ep_obj.scene_season)]
+        season_search_string = [self._make_post_data_JSON(show=ep_obj.show, season=ep_obj)]
         return season_search_string
 
     def _get_episode_search_strings(self, ep_obj, add_string=''):
@@ -91,41 +79,35 @@ class HDBitsProvider(generic.TorrentProvider):
 
         title = item['name']
         if title:
-            title = title.replace(' ', '.')
+            title = self._clean_title_from_provider(title)
 
-        url = self.download_url + urllib.urlencode({'id': item['id'], 'passkey': self.passkey})
+        url = self.urls['download'] + urllib.urlencode({'id': item['id'], 'passkey': self.passkey})
 
         return (title, url)
 
-    def _doSearch(self, search_params, epcount=0, age=0):
+    def _doSearch(self, search_params, search_mode='eponly', epcount=0, age=0, epObj=None):
+
+        #FIXME
         results = []
+
+        logger.log(u"Search string: %s" %  search_params, logger.DEBUG)
 
         self._checkAuth()
 
-        logger.log(u"Search url: " + self.search_url + " search_params: " + search_params, logger.DEBUG)
-
-        data = self.getURL(self.search_url, post_data=search_params)
-
-        if not data:
-            logger.log(u"No data returned from " + self.search_url, logger.ERROR)
-            return []
-
-        parsedJSON = helpers.parse_json(data)
-
-        if parsedJSON is None:
-            logger.log(u"Error trying to load " + self.name + " JSON data", logger.ERROR)
+        parsedJSON = self.getURL(self.urls['search'], post_data=search_params, json=True)
+        if not parsedJSON:
             return []
 
         if self._checkAuthFromData(parsedJSON):
             if parsedJSON and 'data' in parsedJSON:
                 items = parsedJSON['data']
             else:
-                logger.log(u"Resulting JSON from " + self.name + " isn't correct, not parsing it", logger.ERROR)
+                logger.log(u"Resulting JSON from provider isn't correct, not parsing it", logger.ERROR)
                 items = []
 
             for item in items:
                 results.append(item)
-
+        #FIXME SORTING
         return results
 
     def findPropers(self, search_date=None):
@@ -138,13 +120,13 @@ class HDBitsProvider(generic.TorrentProvider):
                 if item['utadded']:
                     try:
                         result_date = datetime.datetime.fromtimestamp(int(item['utadded']))
-                    except:
+                    except Exception:
                         result_date = None
 
                     if result_date:
                         if not search_date or result_date > search_date:
                             title, url = self._get_title_and_url(item)
-                            results.append(classes.Proper(title, url, result_date))
+                            results.append(classes.Proper(title, url, result_date, self.show))
 
         return results
 
@@ -184,17 +166,17 @@ class HDBitsProvider(generic.TorrentProvider):
             if show.air_by_date or show.sports:
                 post_data['tvdb'] = {
                     'id': show.indexerid,
-                    'season': str(episode.airdate)[:7],
+                    'season': str(season.airdate)[:7],
                 }
             elif show.anime:
                 post_data['tvdb'] = {
                     'id': show.indexerid,
-                    'season': "%d" % episode.scene_absolute_number,
+                    'season': "%d" % season.scene_absolute_number,
                 }
             else:
                 post_data['tvdb'] = {
                     'id': show.indexerid,
-                    'season': season,
+                    'season': season.scene_season,
                 }
 
         if search_term:
@@ -207,81 +189,25 @@ class HDBitsProvider(generic.TorrentProvider):
 
 
 class HDBitsCache(tvcache.TVCache):
-    def __init__(self, provider):
+    def __init__(self, provider_obj):
 
-        tvcache.TVCache.__init__(self, provider)
+        tvcache.TVCache.__init__(self, provider_obj)
 
-        # only poll HDBits every 15 minutes max                                                                                          
+        # only poll HDBits every 15 minutes max
         self.minTime = 15
 
-    def updateCache(self):
-
-        # delete anything older then 7 days
-        logger.log(u"Clearing " + self.provider.name + " cache")
-        self._clearCache()
-
-        if not self.shouldUpdate():
-            return
-
-        if self._checkAuth(None):
-
-            data = self._getRSSData()
-
-            # As long as we got something from the provider we count it as an update                                                     
-            if data:
-                self.setLastUpdate()
-            else:
-                return []
-
-            parsedJSON = helpers.parse_json(data)
-
-            if parsedJSON is None:
-                logger.log(u"Error trying to load " + self.provider.name + " JSON feed", logger.ERROR)
-                return []
-
-            if self._checkAuth(parsedJSON):
-                if parsedJSON and 'data' in parsedJSON:
-                    items = parsedJSON['data']
-                else:
-                    logger.log(u"Resulting JSON from " + self.provider.name + " isn't correct, not parsing it",
-                               logger.ERROR)
-                    return []
-
-                ql = []
-                for item in items:
-
-                    ci = self._parseItem(item)
-                    if ci is not None:
-                        ql.append(ci)
-
-                if ql:
-                    myDB = self._getDB()
-                    myDB.mass_action(ql)
-
-            else:
-                raise exceptions.AuthException(
-                    "Your authentication info for " + self.provider.name + " is incorrect, check your config")
-
-        else:
-            return []
-
     def _getRSSData(self):
-        return self.provider.getURL(self.provider.rss_url, post_data=self.provider._make_post_data_JSON())
+        results = []
 
-    def _parseItem(self, item):
+        try:
+            parsedJSON = self.provider.getURL(self.provider.urls['rss'], post_data=self.provider._make_post_data_JSON(), json=True)
 
-        (title, url) = self.provider._get_title_and_url(item)
+            if self.provider._checkAuthFromData(parsedJSON):
+                results = parsedJSON['data']
+        except Exception:
+            pass
 
-        if title and url:
-            logger.log(u"Adding item to results: " + title, logger.DEBUG)
-            return self._addCacheEntry(title, url)
-        else:
-            logger.log(u"The data returned from the " + self.provider.name + " is incomplete, this result is unusable",
-                       logger.ERROR)
-            return None
-
-    def _checkAuth(self, data):
-        return self.provider._checkAuthFromData(data)
+        return {'entries': results}
 
 
-provider = HDBitsProvider()                                                                                                              
+provider = HDBitsProvider()

@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage
 #
 # This file is part of SickRage.
 #
@@ -16,31 +17,28 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-
-
 import urllib, httplib
-import datetime
 
 import sickbeard
 
-from lib import MultipartPostHandler
+import MultipartPostHandler
 import urllib2, cookielib
 
 try:
     import json
 except ImportError:
-    from lib import simplejson as json
+    import simplejson as json
 
 from sickbeard.common import USER_AGENT
 from sickbeard import logger
-from sickbeard.exceptions import ex
+from sickrage.helper.exceptions import ex
 
 
 def sendNZB(nzb):
     """
     Sends an NZB to SABnzbd via the API.
-    
-    nzb: The NZBSearchResult object to send to SAB
+
+    :param nzb: The NZBSearchResult object to send to SAB
     """
 
     # set up a dict with the URL params in it
@@ -51,12 +49,18 @@ def sendNZB(nzb):
         params['ma_password'] = sickbeard.SAB_PASSWORD
     if sickbeard.SAB_APIKEY != None:
         params['apikey'] = sickbeard.SAB_APIKEY
-    if sickbeard.SAB_CATEGORY != None:
-        params['cat'] = sickbeard.SAB_CATEGORY
+    category = sickbeard.SAB_CATEGORY
+    if nzb.show.is_anime:
+        category = sickbeard.SAB_CATEGORY_ANIME
+    if category != None:
+        params['cat'] = category
 
     # use high priority if specified (recently aired episode)
     if nzb.priority == 1:
-        params['priority'] = 1
+        if sickbeard.SAB_FORCED == 1:
+            params['priority'] = 2
+        else:
+            params['priority'] = 1
 
     # if it's a normal result we just pass SAB the URL
     if nzb.resultType == "nzb":
@@ -83,7 +87,7 @@ def sendNZB(nzb):
     logger.log(u"URL: " + url, logger.DEBUG)
 
     try:
-        # if we have the URL to an NZB then we've built up the SAB API URL already so just call it 
+        # if we have the URL to an NZB then we've built up the SAB API URL already so just call it
         if nzb.resultType == "nzb":
             f = urllib.urlopen(url)
 
@@ -141,6 +145,12 @@ def sendNZB(nzb):
 
 
 def _checkSabResponse(f):
+    """
+    Check response from SAB
+
+    :param f: Response from SAV
+    :return: a list of (Boolean, string) which is True if SAB is not reporting an error
+    """
     try:
         result = f.readlines()
     except Exception, e:
@@ -169,6 +179,12 @@ def _checkSabResponse(f):
 
 
 def _sabURLOpenSimple(url):
+    """
+    Open a connection to SAB
+
+    :param url: URL where SAB is at
+    :return: (boolean, string) list, True if connection can be made
+    """
     try:
         f = urllib.urlopen(url)
     except (EOFError, IOError), e:
@@ -185,6 +201,15 @@ def _sabURLOpenSimple(url):
 
 
 def getSabAccesMethod(host=None, username=None, password=None, apikey=None):
+    """
+    Find out how we should connect to SAB
+
+    :param host: hostname where SAB lives
+    :param username: username to use
+    :param password: password to use
+    :param apikey: apikey to use
+    :return: (boolean, string) with True if method was successful
+    """
     url = host + "api?mode=auth"
 
     result, f = _sabURLOpenSimple(url)
@@ -201,13 +226,12 @@ def getSabAccesMethod(host=None, username=None, password=None, apikey=None):
 def testAuthentication(host=None, username=None, password=None, apikey=None):
     """
     Sends a simple API request to SAB to determine if the given connection information is connect
-    
-    host: The host where SAB is running (incl port)
-    username: The username to use for the HTTP request
-    password: The password to use for the HTTP request
-    apikey: The API key to provide to SAB
-    
-    Returns: A tuple containing the success boolean and a message
+
+    :param host: The host where SAB is running (incl port)
+    :param username: The username to use for the HTTP request
+    :param password: The password to use for the HTTP request
+    :param apikey: The API key to provide to SAB
+    :return: A tuple containing the success boolean and a message
     """
 
     # build up the URL parameters
@@ -231,4 +255,4 @@ def testAuthentication(host=None, username=None, password=None, apikey=None):
         return False, sabText
 
     return True, "Success"
-    
+

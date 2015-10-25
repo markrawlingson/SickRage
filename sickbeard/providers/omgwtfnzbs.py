@@ -17,37 +17,29 @@
 # along with SickRage. If not, see <http://www.gnu.org/licenses/>.
 
 import urllib
-import generic
-import sickbeard
-
-from sickbeard import tvcache
-from sickbeard import helpers
-from sickbeard import classes
-from sickbeard import logger
-from sickbeard.exceptions import ex, AuthException
-from sickbeard import show_name_helpers
 from datetime import datetime
 
-try:
-    import xml.etree.cElementTree as etree
-except ImportError:
-    import elementtree.ElementTree as etree
-
-try:
-    import json
-except ImportError:
-    from lib import simplejson as json
+import sickbeard
+from sickbeard import tvcache
+from sickbeard import classes
+from sickbeard import logger
+from sickbeard import show_name_helpers
+from sickbeard.providers import generic
 
 
 class OmgwtfnzbsProvider(generic.NZBProvider):
     def __init__(self):
         generic.NZBProvider.__init__(self, "omgwtfnzbs")
-        self.enabled = False
+
         self.username = None
         self.api_key = None
         self.cache = OmgwtfnzbsCache(self)
-        self.url = 'https://omgwtfnzbs.org/'
+
+        self.urls = {'base_url': 'https://omgwtfnzbs.org/'}
+        self.url = self.urls['base_url']
+
         self.supportsBacklog = True
+
 
     def isEnabled(self):
         return self.enabled
@@ -55,7 +47,7 @@ class OmgwtfnzbsProvider(generic.NZBProvider):
     def _checkAuth(self):
 
         if not self.username or not self.api_key:
-            raise AuthException("Your authentication credentials for " + self.name + " are missing, check your config.")
+            logger.log(u"Invalid api key. Check your settings", logger.WARNING)
 
         return True
 
@@ -74,16 +66,13 @@ class OmgwtfnzbsProvider(generic.NZBProvider):
                 description_text = parsedJSON.get('notice')
 
                 if 'information is incorrect' in parsedJSON.get('notice'):
-                    logger.log(u"Incorrect authentication credentials for " + self.name + " : " + str(description_text),
-                               logger.DEBUG)
-                    raise AuthException(
-                        "Your authentication credentials for " + self.name + " are incorrect, check your config.")
+                    logger.log(u"Invalid api key. Check your settings", logger.WARNING)
 
                 elif '0 results matched your terms' in parsedJSON.get('notice'):
                     return True
 
                 else:
-                    logger.log(u"Unknown error given from " + self.name + " : " + str(description_text), logger.DEBUG)
+                    logger.log(u"Unknown error: %s"  % description_text, logger.DEBUG)
                     return False
 
             return True
@@ -97,7 +86,15 @@ class OmgwtfnzbsProvider(generic.NZBProvider):
     def _get_title_and_url(self, item):
         return (item['release'], item['getnzb'])
 
-    def _doSearch(self, search, epcount=0, retention=0):
+    def _get_size(self, item):
+        try:
+            size = int(item['sizebytes'])
+        except (ValueError, TypeError, AttributeError, KeyError):
+            return -1
+
+        return size
+
+    def _doSearch(self, search, search_mode='eponly', epcount=0, retention=0, epObj=None):
 
         self._checkAuth()
 
@@ -111,21 +108,20 @@ class OmgwtfnzbsProvider(generic.NZBProvider):
         if retention or not params['retention']:
             params['retention'] = retention
 
-        search_url = 'https://api.omgwtfnzbs.org/json/?' + urllib.urlencode(params)
-        logger.log(u"Search url: " + search_url, logger.DEBUG)
+        searchURL = 'https://api.omgwtfnzbs.org/json/?' + urllib.urlencode(params)
+        logger.log(u"Search string: %s" % params, logger.DEBUG)
+        logger.log(u"Search URL: %s" %  searchURL, logger.DEBUG)
 
-        data = self.getURL(search_url, json=True)
-
-        if not data:
-            logger.log(u"No data returned from " + search_url, logger.ERROR)
+        parsedJSON = self.getURL(searchURL, json=True)
+        if not parsedJSON:
             return []
 
-        if self._checkAuthFromData(data, is_XML=False):
-
+        if self._checkAuthFromData(parsedJSON, is_XML=False):
             results = []
 
-            for item in data:
+            for item in parsedJSON:
                 if 'release' in item and 'getnzb' in item:
+                    logger.log(u"Found result: %s " % item.get('title'), logger.DEBUG)
                     results.append(item)
 
             return results
@@ -143,19 +139,39 @@ class OmgwtfnzbsProvider(generic.NZBProvider):
                     title, url = self._get_title_and_url(item)
                     try:
                         result_date = datetime.fromtimestamp(int(item['usenetage']))
-                    except:
+                    except Exception:
                         result_date = None
 
                     if result_date:
-                        results.append(classes.Proper(title, url, result_date))
+                        results.append(classes.Proper(title, url, result_date, self.show))
 
         return results
 
 
 class OmgwtfnzbsCache(tvcache.TVCache):
-    def __init__(self, provider):
-        tvcache.TVCache.__init__(self, provider)
+    def __init__(self, provider_obj):
+        tvcache.TVCache.__init__(self, provider_obj)
         self.minTime = 20
+
+    def _get_title_and_url(self, item):
+        """
+        Retrieves the title and URL data from the item XML node
+
+        item: An elementtree.ElementTree element representing the <item> tag of the RSS feed
+
+        Returns: A tuple containing two strings representing title and URL respectively
+        """
+
+        title = item.get('title')
+        if title:
+            title = u'' + title
+            title = title.replace(' ', '.')
+
+        url = item.get('link')
+        if url:
+            url = url.replace('&amp;', '&')
+
+        return (title, url)
 
     def _getRSSData(self):
         params = {'user': provider.username,
@@ -165,11 +181,8 @@ class OmgwtfnzbsCache(tvcache.TVCache):
 
         rss_url = 'https://rss.omgwtfnzbs.org/rss-download.php?' + urllib.urlencode(params)
 
-        logger.log(self.provider.name + u" cache update URL: " + rss_url, logger.DEBUG)
+        logger.log(u"Cache update URL: %s" % rss_url, logger.DEBUG)
 
         return self.getRSSFeed(rss_url)
-
-    def _checkAuth(self, data):
-        return self.provider._checkAuthFromData(data)
 
 provider = OmgwtfnzbsProvider()

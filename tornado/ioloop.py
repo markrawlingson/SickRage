@@ -41,12 +41,12 @@ import sys
 import threading
 import time
 import traceback
+import math
 
 from tornado.concurrent import TracebackFuture, is_future
 from tornado.log import app_log, gen_log
 from tornado import stack_context
-from tornado.util import Configurable
-from tornado.util import errno_from_exception
+from tornado.util import Configurable, errno_from_exception, timedelta_to_seconds
 
 try:
     import signal
@@ -77,35 +77,52 @@ class IOLoop(Configurable):
     simultaneous connections, you should use a system that supports
     either ``epoll`` or ``kqueue``.
 
-    Example usage for a simple TCP server::
+    Example usage for a simple TCP server:
+
+    .. testcode::
 
         import errno
         import functools
-        import ioloop
+        import tornado.ioloop
         import socket
 
         def connection_ready(sock, fd, events):
             while True:
                 try:
                     connection, address = sock.accept()
-                except socket.error, e:
+                except socket.error as e:
                     if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
                         raise
                     return
                 connection.setblocking(0)
                 handle_connection(connection, address)
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.setblocking(0)
-        sock.bind(("", port))
-        sock.listen(128)
+        if __name__ == '__main__':
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setblocking(0)
+            sock.bind(("", port))
+            sock.listen(128)
 
-        io_loop = ioloop.IOLoop.instance()
-        callback = functools.partial(connection_ready, sock)
-        io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
-        io_loop.start()
+            io_loop = tornado.ioloop.IOLoop.current()
+            callback = functools.partial(connection_ready, sock)
+            io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
+            io_loop.start()
 
+    .. testoutput::
+       :hide:
+
+    By default, a newly-constructed `IOLoop` becomes the thread's current
+    `IOLoop`, unless there already is a current `IOLoop`. This behavior
+    can be controlled with the ``make_current`` argument to the `IOLoop`
+    constructor: if ``make_current=True``, the new `IOLoop` will always
+    try to become current and it raises an error if there is already a
+    current instance. If ``make_current=False``, the new `IOLoop` will
+    not try to become current.
+
+    .. versionchanged:: 4.2
+       Added the ``make_current`` keyword argument to the `IOLoop`
+       constructor.
     """
     # Constants from the epoll module
     _EPOLLIN = 0x001
@@ -134,7 +151,8 @@ class IOLoop(Configurable):
 
         Most applications have a single, global `IOLoop` running on the
         main thread.  Use this method to get this instance from
-        another thread.  To get the current thread's `IOLoop`, use `current()`.
+        another thread.  In most other cases, it is better to use `current()`
+        to get the current thread's `IOLoop`.
         """
         if not hasattr(IOLoop, "_instance"):
             with IOLoop._instance_lock:
@@ -168,28 +186,26 @@ class IOLoop(Configurable):
             del IOLoop._instance
 
     @staticmethod
-    def current():
+    def current(instance=True):
         """Returns the current thread's `IOLoop`.
 
-        If an `IOLoop` is currently running or has been marked as current
-        by `make_current`, returns that instance.  Otherwise returns
-        `IOLoop.instance()`, i.e. the main thread's `IOLoop`.
-
-        A common pattern for classes that depend on ``IOLoops`` is to use
-        a default argument to enable programs with multiple ``IOLoops``
-        but not require the argument for simpler applications::
-
-            class MyClass(object):
-                def __init__(self, io_loop=None):
-                    self.io_loop = io_loop or IOLoop.current()
+        If an `IOLoop` is currently running or has been marked as
+        current by `make_current`, returns that instance.  If there is
+        no current `IOLoop`, returns `IOLoop.instance()` (i.e. the
+        main thread's `IOLoop`, creating one if necessary) if ``instance``
+        is true.
 
         In general you should use `IOLoop.current` as the default when
         constructing an asynchronous object, and use `IOLoop.instance`
         when you mean to communicate to the main thread from a different
         one.
+
+        .. versionchanged:: 4.1
+           Added ``instance`` argument to control the fallback to
+           `IOLoop.instance()`.
         """
         current = getattr(IOLoop._current, "instance", None)
-        if current is None:
+        if current is None and instance:
             return IOLoop.instance()
         return current
 
@@ -198,9 +214,13 @@ class IOLoop(Configurable):
 
         An `IOLoop` automatically becomes current for its thread
         when it is started, but it is sometimes useful to call
-        `make_current` explictly before starting the `IOLoop`,
+        `make_current` explicitly before starting the `IOLoop`,
         so that code run at startup time can find the right
         instance.
+
+        .. versionchanged:: 4.1
+           An `IOLoop` created while there is no current `IOLoop`
+           will automatically become current.
         """
         IOLoop._current.instance = self
 
@@ -224,8 +244,14 @@ class IOLoop(Configurable):
         from tornado.platform.select import SelectIOLoop
         return SelectIOLoop
 
-    def initialize(self):
-        pass
+    def initialize(self, make_current=None):
+        if make_current is None:
+            if IOLoop.current(instance=False) is None:
+                self.make_current()
+        elif make_current:
+            if IOLoop.current(instance=False) is None:
+                raise RuntimeError("current IOLoop already exists")
+            self.make_current()
 
     def close(self, all_fds=False):
         """Closes the `IOLoop`, freeing any resources used.
@@ -391,7 +417,7 @@ class IOLoop(Configurable):
                 # do stuff...
 
             if __name__ == '__main__':
-                IOLoop.instance().run_sync(main)
+                IOLoop.current().run_sync(main)
         """
         future_cell = [None]
 
@@ -433,7 +459,7 @@ class IOLoop(Configurable):
         """
         return time.time()
 
-    def add_timeout(self, deadline, callback):
+    def add_timeout(self, deadline, callback, *args, **kwargs):
         """Runs the ``callback`` at the time ``deadline`` from the I/O loop.
 
         Returns an opaque handle that may be passed to
@@ -442,13 +468,59 @@ class IOLoop(Configurable):
         ``deadline`` may be a number denoting a time (on the same
         scale as `IOLoop.time`, normally `time.time`), or a
         `datetime.timedelta` object for a deadline relative to the
-        current time.
+        current time.  Since Tornado 4.0, `call_later` is a more
+        convenient alternative for the relative case since it does not
+        require a timedelta object.
 
         Note that it is not safe to call `add_timeout` from other threads.
         Instead, you must use `add_callback` to transfer control to the
         `IOLoop`'s thread, and then call `add_timeout` from there.
+
+        Subclasses of IOLoop must implement either `add_timeout` or
+        `call_at`; the default implementations of each will call
+        the other.  `call_at` is usually easier to implement, but
+        subclasses that wish to maintain compatibility with Tornado
+        versions prior to 4.0 must use `add_timeout` instead.
+
+        .. versionchanged:: 4.0
+           Now passes through ``*args`` and ``**kwargs`` to the callback.
         """
-        raise NotImplementedError()
+        if isinstance(deadline, numbers.Real):
+            return self.call_at(deadline, callback, *args, **kwargs)
+        elif isinstance(deadline, datetime.timedelta):
+            return self.call_at(self.time() + timedelta_to_seconds(deadline),
+                                callback, *args, **kwargs)
+        else:
+            raise TypeError("Unsupported deadline %r" % deadline)
+
+    def call_later(self, delay, callback, *args, **kwargs):
+        """Runs the ``callback`` after ``delay`` seconds have passed.
+
+        Returns an opaque handle that may be passed to `remove_timeout`
+        to cancel.  Note that unlike the `asyncio` method of the same
+        name, the returned object does not have a ``cancel()`` method.
+
+        See `add_timeout` for comments on thread-safety and subclassing.
+
+        .. versionadded:: 4.0
+        """
+        return self.call_at(self.time() + delay, callback, *args, **kwargs)
+
+    def call_at(self, when, callback, *args, **kwargs):
+        """Runs the ``callback`` at the absolute time designated by ``when``.
+
+        ``when`` must be a number using the same reference point as
+        `IOLoop.time`.
+
+        Returns an opaque handle that may be passed to `remove_timeout`
+        to cancel.  Note that unlike the `asyncio` method of the same
+        name, the returned object does not have a ``cancel()`` method.
+
+        See `add_timeout` for comments on thread-safety and subclassing.
+
+        .. versionadded:: 4.0
+        """
+        return self.add_timeout(when, callback, *args, **kwargs)
 
     def remove_timeout(self, timeout):
         """Cancels a pending timeout.
@@ -588,8 +660,8 @@ class PollIOLoop(IOLoop):
     (Linux), `tornado.platform.kqueue.KQueueIOLoop` (BSD and Mac), or
     `tornado.platform.select.SelectIOLoop` (all platforms).
     """
-    def initialize(self, impl, time_func=None):
-        super(PollIOLoop, self).initialize()
+    def initialize(self, impl, time_func=None, **kwargs):
+        super(PollIOLoop, self).initialize(**kwargs)
         self._impl = impl
         if hasattr(self._impl, 'fileno'):
             set_close_exec(self._impl.fileno())
@@ -606,7 +678,7 @@ class PollIOLoop(IOLoop):
         self._thread_ident = None
         self._blocking_signal_threshold = None
         self._timeout_counter = itertools.count()
-        
+
         # Create a pipe that we send bogus data to when we want to wake
         # the I/O loop when it is idle
         self._waker = Waker()
@@ -679,7 +751,7 @@ class PollIOLoop(IOLoop):
         #
         # If someone has already set a wakeup fd, we don't want to
         # disturb it.  This is an issue for twisted, which does its
-        # SIGCHILD processing in response to its own wakeup fd being
+        # SIGCHLD processing in response to its own wakeup fd being
         # written to.  As long as the wakeup fd is registered on the IOLoop,
         # the loop will still wake up and everything should work.
         old_wakeup_fd = None
@@ -694,8 +766,10 @@ class PollIOLoop(IOLoop):
                     # IOLoop is just started once at the beginning.
                     signal.set_wakeup_fd(old_wakeup_fd)
                     old_wakeup_fd = None
-            except ValueError:  # non-main thread
-                pass
+            except ValueError:
+                # Non-main thread, or the previous value of wakeup_fd
+                # is no longer valid.
+                old_wakeup_fd = None
 
         try:
             while True:
@@ -709,17 +783,18 @@ class PollIOLoop(IOLoop):
                 # Do not run anything until we have determined which ones
                 # are ready, so timeouts that call add_timeout cannot
                 # schedule anything in this iteration.
+                due_timeouts = []
                 if self._timeouts:
                     now = self.time()
                     while self._timeouts:
                         if self._timeouts[0].callback is None:
-                            # the timeout was cancelled
+                            # The timeout was cancelled.  Note that the
+                            # cancellation check is repeated below for timeouts
+                            # that are cancelled by another timeout or callback.
                             heapq.heappop(self._timeouts)
                             self._cancellations -= 1
                         elif self._timeouts[0].deadline <= now:
-                            timeout = heapq.heappop(self._timeouts)
-                            callbacks.append(timeout.callback)
-                            del timeout
+                            due_timeouts.append(heapq.heappop(self._timeouts))
                         else:
                             break
                     if (self._cancellations > 512
@@ -733,9 +808,12 @@ class PollIOLoop(IOLoop):
 
                 for callback in callbacks:
                     self._run_callback(callback)
+                for timeout in due_timeouts:
+                    if timeout.callback is not None:
+                        self._run_callback(timeout.callback)
                 # Closures may be holding on to a lot of memory, so allow
                 # them to be freed before we go into our poll wait.
-                callbacks = callback = None
+                callbacks = callback = due_timeouts = timeout = None
 
                 if self._callbacks:
                     # If any callbacks or timeouts called add_callback,
@@ -813,8 +891,11 @@ class PollIOLoop(IOLoop):
     def time(self):
         return self.time_func()
 
-    def add_timeout(self, deadline, callback):
-        timeout = _Timeout(deadline, stack_context.wrap(callback), self)
+    def call_at(self, deadline, callback, *args, **kwargs):
+        timeout = _Timeout(
+            deadline,
+            functools.partial(stack_context.wrap(callback), *args, **kwargs),
+            self)
         heapq.heappush(self._timeouts, timeout)
         return timeout
 
@@ -869,23 +950,11 @@ class _Timeout(object):
     __slots__ = ['deadline', 'callback', 'tiebreaker']
 
     def __init__(self, deadline, callback, io_loop):
-        if isinstance(deadline, numbers.Real):
-            self.deadline = deadline
-        elif isinstance(deadline, datetime.timedelta):
-            now = io_loop.time()
-            try:
-                self.deadline = now + deadline.total_seconds()
-            except AttributeError:  # py2.6
-                self.deadline = now + _Timeout.timedelta_to_seconds(deadline)
-        else:
+        if not isinstance(deadline, numbers.Real):
             raise TypeError("Unsupported deadline %r" % deadline)
+        self.deadline = deadline
         self.callback = callback
         self.tiebreaker = next(io_loop._timeout_counter)
-
-    @staticmethod
-    def timedelta_to_seconds(td):
-        """Equivalent to td.total_seconds() (introduced in python 2.7)."""
-        return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10 ** 6) / float(10 ** 6)
 
     # Comparison methods to sort by deadline, with object id as a tiebreaker
     # to guarantee a consistent ordering.  The heapq module uses __le__
@@ -904,8 +973,16 @@ class PeriodicCallback(object):
     """Schedules the given callback to be called periodically.
 
     The callback is called every ``callback_time`` milliseconds.
+    Note that the timeout is given in milliseconds, while most other
+    time-related functions in Tornado use seconds.
+
+    If the callback runs for longer than ``callback_time`` milliseconds,
+    subsequent invocations will be skipped to get back on schedule.
 
     `start` must be called after the `PeriodicCallback` is created.
+
+    .. versionchanged:: 4.1
+       The ``io_loop`` argument is deprecated.
     """
     def __init__(self, callback, callback_time, io_loop=None):
         self.callback = callback
@@ -929,18 +1006,29 @@ class PeriodicCallback(object):
             self.io_loop.remove_timeout(self._timeout)
             self._timeout = None
 
+    def is_running(self):
+        """Return True if this `.PeriodicCallback` has been started.
+
+        .. versionadded:: 4.1
+        """
+        return self._running
+
     def _run(self):
         if not self._running:
             return
         try:
-            self.callback()
+            return self.callback()
         except Exception:
             self.io_loop.handle_callback_exception(self.callback)
-        self._schedule_next()
+        finally:
+            self._schedule_next()
 
     def _schedule_next(self):
         if self._running:
             current_time = self.io_loop.time()
-            while self._next_timeout <= current_time:
-                self._next_timeout += self.callback_time / 1000.0
+
+            if self._next_timeout <= current_time:
+                callback_time_sec = self.callback_time / 1000.0
+                self._next_timeout += (math.floor((current_time - self._next_timeout) / callback_time_sec) + 1) * callback_time_sec
+
             self._timeout = self.io_loop.add_timeout(self._next_timeout, self._run)

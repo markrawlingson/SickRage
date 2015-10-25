@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -26,73 +27,91 @@ from sickbeard import logger
 from sickbeard import db
 from sickbeard import common
 from sickbeard import helpers
-from sickbeard import exceptions
+from sickbeard import sbdatetime, network_timezones
+from sickrage.helper.exceptions import MultipleShowObjectsException
+
 
 class DailySearcher():
     def __init__(self):
         self.lock = threading.Lock()
-
         self.amActive = False
 
     def run(self, force=False):
+        """
+        Runs the daily searcher, queuing selected episodes for search
+
+        :param force: Force search
+        """
+        if self.amActive:
+            return
 
         self.amActive = True
 
-        logger.log(u"Searching for coming episodes and 1 weeks worth of previously WANTED episodes ...")
+        logger.log(u"Searching for new released episodes ...")
 
-        fromDate = datetime.date.today() - datetime.timedelta(weeks=1)
-        curDate = datetime.date.today()
+        if not network_timezones.network_dict:
+            network_timezones.update_network_dict()
+
+        if network_timezones.network_dict:
+            curDate = (datetime.date.today() + datetime.timedelta(days=1)).toordinal()
+        else:
+            curDate = (datetime.date.today() + datetime.timedelta(days=2)).toordinal()
+
+        curTime = datetime.datetime.now(network_timezones.sb_timezone)
 
         myDB = db.DBConnection()
-        sqlResults = myDB.select("SELECT * FROM tv_episodes WHERE status in (?,?) AND airdate >= ? AND airdate <= ?",
-                                 [common.UNAIRED, common.WANTED, fromDate.toordinal(), curDate.toordinal()])
+        sqlResults = myDB.select("SELECT * FROM tv_episodes WHERE status = ? AND season > 0 AND (airdate <= ? and airdate > 1)",
+                                 [common.UNAIRED, curDate])
 
         sql_l = []
-        todaysEps = {}
+        show = None
+
         for sqlEp in sqlResults:
+            try:
+                if not show or int(sqlEp["showid"]) != show.indexerid:
+                    show = helpers.findCertainShow(sickbeard.showList, int(sqlEp["showid"]))
+
+                # for when there is orphaned series in the database but not loaded into our showlist
+                if not show or show.paused:
+                    continue
+
+            except MultipleShowObjectsException:
+                logger.log(u"ERROR: expected to find a single show matching " + str(sqlEp['showid']))
+                continue
 
             try:
-                show = helpers.findCertainShow(sickbeard.showList, int(sqlEp["showid"]))
-            except exceptions.MultipleShowObjectsException:
-                logger.log(u"ERROR: expected to find a single show matching " + sqlEp["showid"])
-                break
+                end_time = sbdatetime.sbdatetime.convert_to_setting(network_timezones.parse_date_time(sqlEp['airdate'], show.airs,
+                                                             show.network)) + datetime.timedelta(
+                    minutes=helpers.tryInt(show.runtime, 60))
+                #Keep this for future debug
+                #logger.log(u"Show %s ends at %s and now it is %s. Runtime is %s and airs %s" % (show.name, end_time, curTime, show.runtime, show.airs),logger.DEBUG )
 
-            if not show:
-                logger.log(u"Unable to find the show with ID " + str(
-                    sqlEp["showid"]) + " in your show list! DB value was " + str(sqlEp), logger.ERROR)
-                break
+                # filter out any episodes that haven't aried yet
+                if end_time > curTime:
+                    continue
+            except:
+                # if an error occured assume the episode hasn't aired yet
+                continue
 
-            ep = show.getEpisode(sqlEp["season"], sqlEp["episode"])
+            ep = show.getEpisode(int(sqlEp["season"]), int(sqlEp["episode"]))
             with ep.lock:
-                if ep.show.paused:
+                if ep.season == 0:
+                    logger.log(u"New episode " + ep.prettyName() + " airs today, setting status to SKIPPED because is a special season")
                     ep.status = common.SKIPPED
                 else:
-                    if ep.status == common.UNAIRED:
-                        logger.log(u"New episode " + ep.prettyName() + " airs today, setting status to WANTED")
-                        ep.status = common.WANTED
-
-                if ep.status == common.WANTED:
-                    if show not in todaysEps:
-                        todaysEps[show] = [ep]
-                    else:
-                        todaysEps[show].append(ep)
+                    logger.log(u"New episode %s airs today, setting to default episode status for this show: %s" % (ep.prettyName(), common.statusStrings[ep.show.default_ep_status]))
+                    ep.status = ep.show.default_ep_status
 
                 sql_l.append(ep.get_sql())
 
-        if sql_l:
+        if len(sql_l) > 0:
             myDB = db.DBConnection()
             myDB.mass_action(sql_l)
-
-        if len(todaysEps):
-            for show in todaysEps:
-                segment = todaysEps[show]
-
-                # remove show from name cache if marked invalid
-                sickbeard.name_cache.clearCache(show)
-
-                dailysearch_queue_item = sickbeard.search_queue.DailySearchQueueItem(show, segment)
-                sickbeard.searchQueueScheduler.action.add_item(dailysearch_queue_item)
         else:
-            logger.log(u"Could not find any needed episodes to search for ...")
+            logger.log(u"No new released episodes found ...")
+
+        # queue episode for daily search
+        dailysearch_queue_item = sickbeard.search_queue.DailySearchQueueItem()
+        sickbeard.searchQueueScheduler.action.add_item(dailysearch_queue_item)
 
         self.amActive = False

@@ -1,14 +1,29 @@
 language: python
 python:
-  - 2.5
-  - 2.6
-  - 2.7
+  - 2.7.10
 
-# whitelist
+sudo: false
+
 branches:
-  only:
-    - ThePirateBay
-    - Pistachitos
+  except:
+    - master
 
-before_script: cd ./tests
-script: ./all_tests.py
+install: pip install -U pyOpenSSL
+
+cache: pip
+
+before_script:
+ - chmod +x ./tests/all_tests.py
+
+script:
+  - ./tests/all_tests.py
+
+after_failure:
+  - cat ./Logs/sickrage.log
+
+notifications:
+  irc: "irc.freenode.net#sickrage-updates"
+
+  email:
+    on_success: change
+    on_failure: change

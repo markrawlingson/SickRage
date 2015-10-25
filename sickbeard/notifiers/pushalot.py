@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
+import socket
 from httplib import HTTPSConnection, HTTPException
 from urllib import urlencode
 from ssl import SSLError
@@ -45,6 +46,14 @@ class PushalotNotifier:
             self._sendPushalot(pushalot_authorizationtoken=None,
                                event=common.notifyStrings[common.NOTIFY_SUBTITLE_DOWNLOAD],
                                message=ep_name + ": " + lang)
+                               
+    def notify_git_update(self, new_version = "??"):
+        if sickbeard.USE_PUSHALOT:
+            update_text=common.notifyStrings[common.NOTIFY_GIT_UPDATE_TEXT]
+            title=common.notifyStrings[common.NOTIFY_GIT_UPDATE]
+            self._sendPushalot(pushalot_authorizationtoken=None,
+                               event=title, 
+                               message=update_text + new_version)
 
     def _sendPushalot(self, pushalot_authorizationtoken=None, event=None, message=None, force=False):
 
@@ -69,7 +78,7 @@ class PushalotNotifier:
                                  "/api/sendmessage",
                                  headers={'Content-type': "application/x-www-form-urlencoded"},
                                  body=urlencode(data))
-        except (SSLError, HTTPException):
+        except (SSLError, HTTPException, socket.error):
             logger.log(u"Pushalot notification failed.", logger.ERROR)
             return False
         response = http_handler.getresponse()

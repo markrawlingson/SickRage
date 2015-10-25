@@ -1,49 +1,18 @@
 $(document).ready(function () {
 
-    function populateSelect() {
-        if (!$('#nameToSearch').length) {
-            return;
-        }
-
-        if ($('#indexerLangSelect option').length <= 1) {
-            $.getJSON(sbRoot + '/home/addShows/getIndexerLanguages', {}, function (data) {
-                var selected, resultStr = '';
-
-                if (data.results.length === 0) {
-                    resultStr = '<option value="en" selected="selected">en</option>';
-                } else {
-                    $.each(data.results, function (index, obj) {
-                        if (resultStr == '') {
-                            selected = ' selected="selected"';
-                        } else {
-                            selected = '';
-                        }
-
-                        resultStr += '<option value="' + obj + '"' + selected + '>' + obj + '</option>';
-                    });
-                }
-
-                $('#indexerLangSelect').html(resultStr);
-                $('#indexerLangSelect').change(function () { searchIndexers(); });
-            });
-        }
-    }
-
     var searchRequestXhr = null;
 
     function searchIndexers() {
-        if (!$('#nameToSearch').val().length) {
-            return;
-        }
+        if (!$('#nameToSearch').val().length) return;
 
         if (searchRequestXhr) searchRequestXhr.abort();
 
-        var searchingFor = $('#nameToSearch').val() + ' on ' + $('#providedIndexer option:selected').text() + ' in ' + $('#indexerLangSelect').val();
-        $('#searchResults').empty().html('<img id="searchingAnim" src="' + sbRoot + '/images/loading32.gif" height="32" width="32" /> searching ' + searchingFor + '...');
+        var searchingFor = $('#nameToSearch').val().trim() + ' on ' + $('#providedIndexer option:selected').text() + ' in ' + $('#indexerLangSelect').val();
+        $('#searchResults').empty().html('<img id="searchingAnim" src="' + srRoot + '/images/loading32' + themeSpinner + '.gif" height="32" width="32" /> searching ' + searchingFor + '...');
 
         searchRequestXhr = $.ajax({
-            url: sbRoot + '/home/addShows/searchIndexersForShowName',
-            data: {'search_term': $('#nameToSearch').val(), 'lang': $('#indexerLangSelect').val(), 'indexer': $('#providedIndexer').val()},
+            url: srRoot + '/home/addShows/searchIndexersForShowName',
+            data: {'search_term': $('#nameToSearch').val().trim(), 'lang': $('#indexerLangSelect').val(), 'indexer': $('#providedIndexer').val()},
             timeout: parseInt($('#indexer_timeout').val(), 10) * 1000,
             dataType: 'json',
             error: function () {
@@ -51,7 +20,7 @@ $(document).ready(function () {
             },
             success: function (data) {
                 var firstResult = true;
-                var resultStr = '<fieldset>\n<legend>Search Results:</legend>\n';
+                var resultStr = '<fieldset>\n<legend class="legendStep">Search Results:</legend>\n';
                 var checked = '';
 
                 if (data.results.length === 0) {
@@ -68,11 +37,11 @@ $(document).ready(function () {
                         var whichSeries = obj.join('|');
 
 
-                        resultStr += '<input type="radio" id="whichSeries" name="whichSeries" value="' + whichSeries + '"' + checked + ' /> ';
-                        if (data.langid && data.langid != "") {
-                            resultStr += '<a href="'+ obj[2] + obj[3] + '&lid=' + data.langid + '" onclick=\"window.open(this.href, \'_blank\'); return false;\" ><b>' + obj[4] + '</b></a>';
+                        resultStr += '<input type="radio" id="whichSeries" name="whichSeries" value="' + whichSeries.replace(/"/g, "")  + '"' + checked + ' /> ';
+                        if (data.langid && data.langid !== "") {
+                            resultStr += '<a href="' + anonURL + obj[2] + obj[3] + '&lid=' + data.langid + '" onclick=\"window.open(this.href, \'_blank\'); return false;\" ><b>' + obj[4] + '</b></a>';
                         } else {
-                            resultStr += '<a href="'+ obj[2] + obj[3] + '" onclick=\"window.open(this.href, \'_blank\'); return false;\" ><b>' + obj[4] + '</b></a>';
+                            resultStr += '<a href="' + anonURL + obj[2] + obj[3] + '" onclick=\"window.open(this.href, \'_blank\'); return false;\" ><b>' + obj[4] + '</b></a>';
                         }
 
                         if (obj[5] !== null) {
@@ -113,7 +82,7 @@ $(document).ready(function () {
             alert('You must choose a show to continue');
             return false;
         }
-
+        generate_bwlist();
         $('#addShowForm').submit();
     });
 
@@ -136,7 +105,6 @@ $(document).ready(function () {
         formid: 'addShowForm',
         revealfx: ['slide', 500],
         oninit: function () {
-            populateSelect();
             updateSampleText();
             if ($('input:hidden[name=whichSeries]').length && $('#fullShowPath').length) {
                 goToStep(3);
@@ -168,7 +136,7 @@ $(document).ready(function () {
         } else {
             show_name = '';
         }
-
+        update_bwlist(show_name);
         var sample_text = 'Adding show <b>' + show_name + '</b> into <b>';
 
         // if we have a root dir selected, figure out the path
@@ -198,7 +166,7 @@ $(document).ready(function () {
 
         // if we have a show name then sanitize and use it for the dir name
         if (show_name.length) {
-            $.get(sbRoot + '/home/addShows/sanitizeFileName', {name: show_name}, function (data) {
+            $.get(srRoot + '/home/addShows/sanitizeFileName', {name: show_name}, function (data) {
                 $('#displayText').html(sample_text.replace('||', data));
             });
         // if not then it's unknown
@@ -216,7 +184,7 @@ $(document).ready(function () {
     }
 
     $('#rootDirText').change(updateSampleText);
-    $('#whichSeries').live('change', updateSampleText);
+    $('#searchResults').on('change', '#whichSeries', updateSampleText);
 
     $('#nameToSearch').keyup(function (event) {
         if (event.keyCode == 13) {
@@ -224,4 +192,32 @@ $(document).ready(function () {
         }
     });
 
+    $('#anime').change (function () {
+        updateSampleText();
+        myform.loadsection(2);
+    });
+
+    function update_bwlist (show_name) {
+        $('#white').children().remove();
+        $('#black').children().remove();
+        $('#pool').children().remove();
+
+        if ($('#anime').prop('checked')) {
+            $('#blackwhitelist').show();
+            if (show_name) {
+                $.getJSON(srRoot + '/home/fetch_releasegroups', {'show_name': show_name}, function (data) {
+                if (data.result == 'success') {
+                    $.each(data.groups, function(i, group) {
+                        var option = $("<option>");
+                        option.attr("value", group.name);
+                        option.html(group.name + ' | ' + group.rating + ' | ' + group.range);
+                        option.appendTo('#pool');
+                    });
+                }
+             });
+            }
+        } else {
+            $('#blackwhitelist').hide();
+        }
+    }
 });

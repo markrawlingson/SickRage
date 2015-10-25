@@ -1,5 +1,6 @@
 # Author: Nic Wolfe <nic@wolfeden.ca>
-# URL: http://code.google.com/p/sickbeard/
+# URL: https://sickrage.tv/
+# Git: https://github.com/SiCKRAGETV/SickRage.git
 #
 # This file is part of SickRage.
 #
@@ -19,24 +20,15 @@
 import os
 import string
 
-from tornado.httputil import HTTPHeaders
-from tornado.web import RequestHandler
-from sickbeard import encodingKludge as ek
+from sickbeard import logger
+from sickrage.helper.encoding import ek
 
-# use the built-in if it's available (python 2.6), if not use the included library
-try:
-    import json
-except ImportError:
-    from lib import simplejson as json
-
-# this is for the drive letter code, it only works on windows
-if os.name == 'nt':
-    from ctypes import windll
 
 # adapted from http://stackoverflow.com/questions/827371/is-there-a-way-to-list-all-the-available-drive-letters-in-python/827490
 def getWinDrives():
     """ Return list of detected drives """
     assert os.name == 'nt'
+    from ctypes import windll
 
     drives = []
     bitmask = windll.kernel32.GetLogicalDrives()  #@UndefinedVariable
@@ -51,7 +43,11 @@ def getWinDrives():
 def foldersAtPath(path, includeParent=False, includeFiles=False):
     """ Returns a list of dictionaries with the folders contained at the given path
         Give the empty string as the path to list the contents of the root path
-        under Unix this means "/", on Windows this will be a list of drive letters)
+        (under Unix this means "/", on Windows this will be a list of drive letters)
+
+        :param includeParent: boolean, include parent dir in list as well
+        :param includeFiles: boolean, include files or only directories
+        :return: list of folders/files
     """
 
     # walk up the tree until we find a valid path
@@ -80,11 +76,16 @@ def foldersAtPath(path, includeParent=False, includeFiles=False):
     if path == parentPath and os.name == 'nt':
         parentPath = ""
 
-    fileList = [{'name': filename, 'path': ek.ek(os.path.join, path, filename)} for filename in ek.ek(os.listdir, path)]
-    if not includeFiles:
-        fileList = filter(lambda entry: ek.ek(os.path.isdir, entry['path']), fileList)
+    try:
+        fileList = [{'name': filename, 'path': ek(os.path.join, path, filename)} for filename in ek(os.listdir, path)]
+    except OSError, e:
+        logger.log(u"Unable to open " + path + ": " + repr(e) + " / " + str(e), logger.WARNING)
+        fileList = [{'name': filename, 'path': ek(os.path.join, parentPath, filename)} for filename in ek(os.listdir, parentPath)]
 
-    # prune out directories to proect the user from doing stupid things (already lower case the dir to reduce calls)
+    if not includeFiles:
+        fileList = filter(lambda entry: ek(os.path.isdir, entry['path']), fileList)
+
+    # prune out directories to protect the user from doing stupid things (already lower case the dir to reduce calls)
     hideList = ["boot", "bootmgr", "cache", "msocache", "recovery", "$recycle.bin", "recycler",
                 "system volume information", "temporary internet files"]  # windows specific
     hideList += [".fseventd", ".spotlight", ".trashes", ".vol", "cachedmessages", "caches", "trash"]  # osx specific
@@ -99,14 +100,3 @@ def foldersAtPath(path, includeParent=False, includeFiles=False):
     entries.extend(fileList)
 
     return entries
-
-
-class WebFileBrowser(RequestHandler):
-    def index(self, path='', includeFiles=False, *args, **kwargs):
-        self.set_header("Content-Type", "application/json")
-        return json.dumps(foldersAtPath(path, True, bool(int(includeFiles))))
-
-    def complete(self, term, includeFiles=0):
-        self.set_header("Content-Type", "application/json")
-        paths = [entry['path'] for entry in foldersAtPath(os.path.dirname(term), includeFiles=bool(int(includeFiles))) if 'path' in entry]
-        return json.dumps(paths)

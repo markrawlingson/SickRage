@@ -19,16 +19,16 @@
 import sickbeard
 
 from sickbeard import logger, common
-from sickbeard.exceptions import ex
+from sickrage.helper.exceptions import ex
 
 # parse_qsl moved to urlparse module in v2.6
 try:
     from urlparse import parse_qsl  #@UnusedImport
-except:
+except ImportError:
     from cgi import parse_qsl  #@Reimport
 
-import lib.oauth2 as oauth
-import lib.pythontwitter as twitter
+import oauth2 as oauth
+import pythontwitter as twitter
 
 
 class TwitterNotifier:
@@ -51,6 +51,12 @@ class TwitterNotifier:
     def notify_subtitle_download(self, ep_name, lang):
         if sickbeard.TWITTER_NOTIFY_ONSUBTITLEDOWNLOAD:
             self._notifyTwitter(common.notifyStrings[common.NOTIFY_SUBTITLE_DOWNLOAD] + ' ' + ep_name + ": " + lang)
+
+    def notify_git_update(self, new_version = "??"):
+        if sickbeard.USE_TWITTER:
+            update_text=common.notifyStrings[common.NOTIFY_GIT_UPDATE_TEXT]
+            title=common.notifyStrings[common.NOTIFY_GIT_UPDATE]
+            self._notifyTwitter(title + " - " + update_text + new_version)
 
     def test_notify(self):
         return self._notifyTwitter("This is a test notification from SickRage", force=True)
@@ -122,9 +128,29 @@ class TwitterNotifier:
         api = twitter.Api(username, password, access_token_key, access_token_secret)
 
         try:
-            api.PostUpdate(message.encode('utf8'))
+            api.PostUpdate(message.encode('utf8')[:139])
         except Exception, e:
             logger.log(u"Error Sending Tweet: " + ex(e), logger.ERROR)
+            return False
+
+        return True
+
+    def _send_dm(self, message=None):
+
+        username = self.consumer_key
+        password = self.consumer_secret
+        dmdest = sickbeard.TWITTER_DMTO
+        access_token_key = sickbeard.TWITTER_USERNAME
+        access_token_secret = sickbeard.TWITTER_PASSWORD
+
+        logger.log(u"Sending DM: " + dmdest + " " + message, logger.DEBUG)
+
+        api = twitter.Api(username, password, access_token_key, access_token_secret)
+
+        try:
+            api.PostDirectMessage(dmdest, message.encode('utf8')[:139])
+        except Exception, e:
+            logger.log(u"Error Sending Tweet (DM): " + ex(e), logger.ERROR)
             return False
 
         return True
@@ -135,7 +161,9 @@ class TwitterNotifier:
         if not sickbeard.USE_TWITTER and not force:
             return False
 
-        return self._send_tweet(prefix + ": " + message)
-
+        if sickbeard.TWITTER_USEDM and sickbeard.TWITTER_DMTO:
+            return self._send_dm(prefix + ": " + message)
+        else:
+            return self._send_tweet(prefix + ": " + message)
 
 notifier = TwitterNotifier

@@ -19,14 +19,14 @@
 import socket
 
 import sickbeard
-
 from sickbeard import logger, common
-from sickbeard.exceptions import ex
-
-from lib.growl import gntp
+from sickrage.helper.exceptions import ex
+from libgrowl import gntp
 
 
 class GrowlNotifier:
+    sr_logo_url = 'https://raw.githubusercontent.com/SiCKRAGETV/SickRage/master/gui/slick/images/sickrage-shark-mascot.png'
+
     def test_notify(self, host, password):
         self._sendRegistration(host, password, 'Test')
         return self._sendGrowl("Test Growl", "Testing Growl settings from SickRage", "Test", host, password,
@@ -43,6 +43,12 @@ class GrowlNotifier:
     def notify_subtitle_download(self, ep_name, lang):
         if sickbeard.GROWL_NOTIFY_ONSUBTITLEDOWNLOAD:
             self._sendGrowl(common.notifyStrings[common.NOTIFY_SUBTITLE_DOWNLOAD], ep_name + ": " + lang)
+
+    def notify_git_update(self, new_version = "??"):
+        if sickbeard.USE_GROWL:
+            update_text=common.notifyStrings[common.NOTIFY_GIT_UPDATE_TEXT]
+            title=common.notifyStrings[common.NOTIFY_GIT_UPDATE]
+            self._sendGrowl(title, update_text + new_version)
 
     def _send_growl(self, options, message=None):
 
@@ -63,8 +69,7 @@ class GrowlNotifier:
         if options['priority']:
             notice.add_header('Notification-Priority', options['priority'])
         if options['icon']:
-            notice.add_header('Notification-Icon',
-                              'https://raw.github.com/echel0n/SickRage/master/gui/slick/images/sickrage.png')
+            notice.add_header('Notification-Icon', self.sr_logo_url)
 
         if message:
             notice.add_header('Notification-Text', message)
@@ -167,12 +172,12 @@ class GrowlNotifier:
         #Send Registration
         register = gntp.GNTPRegister()
         register.add_header('Application-Name', opts['app'])
-        register.add_header('Application-Icon',
-                            'https://raw.githubusercontent.com/echel0n/SickRage/master/gui/slick/images/sickrage-shark-mascot.png')
+        register.add_header('Application-Icon', self.sr_logo_url)
 
         register.add_notification('Test', True)
         register.add_notification(common.notifyStrings[common.NOTIFY_SNATCH], True)
         register.add_notification(common.notifyStrings[common.NOTIFY_DOWNLOAD], True)
+        register.add_notification(common.notifyStrings[common.NOTIFY_GIT_UPDATE], True)
 
         if opts['password']:
             register.set_password(opts['password'])

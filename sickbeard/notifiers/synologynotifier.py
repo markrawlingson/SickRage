@@ -15,17 +15,15 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-
-
 import os
 import subprocess
 
 import sickbeard
 
 from sickbeard import logger
-from sickbeard import encodingKludge as ek
-from sickbeard.exceptions import ex
 from sickbeard import common
+from sickrage.helper.encoding import ek
+from sickrage.helper.exceptions import ex
 
 
 class synologyNotifier:
@@ -41,10 +39,16 @@ class synologyNotifier:
         if sickbeard.SYNOLOGYNOTIFIER_NOTIFY_ONSUBTITLEDOWNLOAD:
             self._send_synologyNotifier(ep_name + ": " + lang, common.notifyStrings[common.NOTIFY_SUBTITLE_DOWNLOAD])
 
+    def notify_git_update(self, new_version = "??"):
+        if sickbeard.USE_SYNOLOGYNOTIFIER:
+            update_text=common.notifyStrings[common.NOTIFY_GIT_UPDATE_TEXT]
+            title=common.notifyStrings[common.NOTIFY_GIT_UPDATE]
+            self._send_synologyNotifier(update_text + new_version, title)
+
     def _send_synologyNotifier(self, message, title):
         synodsmnotify_cmd = ["/usr/syno/bin/synodsmnotify", "@administrators", title, message]
         logger.log(u"Executing command " + str(synodsmnotify_cmd))
-        logger.log(u"Absolute path to command: " + ek.ek(os.path.abspath, synodsmnotify_cmd[0]), logger.DEBUG)
+        logger.log(u"Absolute path to command: " + ek(os.path.abspath, synodsmnotify_cmd[0]), logger.DEBUG)
         try:
             p = subprocess.Popen(synodsmnotify_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  cwd=sickbeard.PROG_DIR)

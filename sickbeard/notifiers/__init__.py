@@ -11,15 +11,15 @@
 # SickRage is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#  GNU General Public License for more details.
+# GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
 # along with SickRage.  If not, see <http://www.gnu.org/licenses/>.
 
-import sickbeard
 
-import xbmc
+import kodi
 import plex
+import emby
 import nmj
 import nmjv2
 import synoindex
@@ -35,6 +35,7 @@ import boxcar2
 import nma
 import pushalot
 import pushbullet
+import freemobile
 
 import tweet
 import trakt
@@ -43,8 +44,9 @@ import emailnotify
 from sickbeard.common import *
 
 # home theater / nas
-xbmc_notifier = xbmc.XBMCNotifier()
+kodi_notifier = kodi.KODINotifier()
 plex_notifier = plex.PLEXNotifier()
+emby_notifier = emby.EMBYNotifier()
 nmj_notifier = nmj.NMJNotifier()
 nmjv2_notifier = nmjv2.NMJv2Notifier()
 synoindex_notifier = synoindex.synoIndexNotifier()
@@ -60,6 +62,7 @@ boxcar2_notifier = boxcar2.Boxcar2Notifier()
 nma_notifier = nma.NMA_Notifier()
 pushalot_notifier = pushalot.PushalotNotifier()
 pushbullet_notifier = pushbullet.PushbulletNotifier()
+freemobile_notifier = freemobile.FreeMobileNotifier()
 # social
 twitter_notifier = tweet.TwitterNotifier()
 trakt_notifier = trakt.TraktNotifier()
@@ -67,7 +70,7 @@ email_notifier = emailnotify.EmailNotifier()
 
 notifiers = [
     libnotify_notifier,  # Libnotify notifier goes first because it doesn't involve blocking on network activity.
-    xbmc_notifier,
+    kodi_notifier,
     plex_notifier,
     nmj_notifier,
     nmjv2_notifier,
@@ -75,10 +78,11 @@ notifiers = [
     synology_notifier,
     pytivo_notifier,
     growl_notifier,
+    freemobile_notifier,
     prowl_notifier,
     pushover_notifier,
     boxcar_notifier,
-	boxcar2_notifier,
+    boxcar2_notifier,
     nma_notifier,
     pushalot_notifier,
     pushbullet_notifier,
@@ -101,3 +105,8 @@ def notify_subtitle_download(ep_name, lang):
 def notify_snatch(ep_name):
     for n in notifiers:
         n.notify_snatch(ep_name)
+
+
+def notify_git_update(new_version=""):
+    for n in notifiers:
+        n.notify_git_update(new_version)
